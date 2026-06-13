@@ -14,6 +14,26 @@
 
 #define LOCTEXT_NAMESPACE "InkpotStoryAssetFactory"
 
+namespace
+{
+	// Looks for a "<storyname>.prosetta.json" sidecar next to the imported Ink file and,
+	// when present, bakes its contents onto the asset so the line metadata is available
+	// to the cooked runtime.
+	void LoadProsettaSidecar(const FString& InFullFilePath, UInkpotStoryAsset* InAsset)
+	{
+		const FString sidecarPath = FPaths::Combine(
+			FPaths::GetPath(InFullFilePath),
+			FPaths::GetBaseFilename(InFullFilePath) + TEXT(".prosetta.json"));
+
+		if (!FPaths::FileExists(sidecarPath))
+			return;
+
+		FString prosettaJSON;
+		if (FFileHelper::LoadFileToString(prosettaJSON, *sidecarPath))
+			InAsset->SetProsettaJSON(prosettaJSON);
+	}
+}
+
 UInkpotStoryAssetFactory::UInkpotStoryAssetFactory()
 {
 	Formats.Add(FString(TEXT("ink;")) + LOCTEXT("FormatTxt", "Ink Story File").ToString());
@@ -69,6 +89,7 @@ UInkpotStoryAsset* UInkpotStoryAssetFactory::ExecuteStandardImportPipeline(UClas
 		newAsset = NewObject<UInkpotStoryAsset>(InParent, InClass, InName, InFlags);
 		newAsset->SetSource(inkStory);
 		newAsset->SetCompiledJSON(inkJSON);
+		LoadProsettaSidecar(InFullFilePath, newAsset);
 		newAsset->UpdateAssetInfo(InFullFilePath);
 		GenerateTAGs(InParent, newAsset);
 	}
