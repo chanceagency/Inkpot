@@ -30,7 +30,7 @@ public:
 	 * The hydrated Prosetta segments parsed from this line, in order of appearance.
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
-	const TArray<TObjectPtr<UProsettaLine>>& GetProsettaSegments() const;
+	TArray<UProsettaLine*> GetProsettaSegments() const;
 
 	/**
 	 * HasProsettaTags

@@ -55,9 +55,13 @@ const FString& UInkpotLine::GetRawString() const
 	return RawString;
 }
 
-const TArray<TObjectPtr<UProsettaLine>>& UInkpotLine::GetProsettaSegments() const
+TArray<UProsettaLine*> UInkpotLine::GetProsettaSegments() const
 {
-	return ProsettaSegments;
+	TArray<UProsettaLine*> segments;
+	segments.Reserve(ProsettaSegments.Num());
+	for (const TObjectPtr<UProsettaLine>& segment : ProsettaSegments)
+		segments.Add(segment);
+	return segments;
 }
 
 bool UInkpotLine::HasProsettaTags() const
