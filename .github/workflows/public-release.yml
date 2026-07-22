@@ -1,0 +1,118 @@
+name: Public Inkpot Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version already recorded in Inkpot.uplugin (for example 1.40.22)
+        required: true
+        type: string
+      release_notes:
+        description: Markdown release notes
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  DOWNLOADS_BASE_URL: ${{ vars.PROSETTA_DOWNLOADS_BASE_URL || 'https://storage.googleapis.com/prosetta-downloads-prod' }}
+  DOWNLOADS_BUCKET: ${{ vars.PROSETTA_DOWNLOADS_BUCKET }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: release
+          fetch-depth: 0
+          lfs: true
+
+      - name: Validate release metadata and create tag
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$(jq -r '.VersionName' Inkpot.uplugin)" == "$VERSION" ]]
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists." >&2
+            exit 1
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ "$VERSION" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Materialize and verify Git LFS files
+        run: |
+          set -euo pipefail
+          git lfs pull
+          git lfs fsck
+          while IFS= read -r file; do
+            if head -c 64 "$file" | grep -Fq 'version https://git-lfs.github.com/spec/v1'; then
+              echo "Unmaterialized Git LFS pointer: $file" >&2
+              exit 1
+            fi
+          done < <(git lfs ls-files --name-only)
+
+      - name: Create client ZIP
+        id: package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/package/Inkpot"
+          ARCHIVE="Inkpot-v$VERSION.zip"
+          mkdir -p "$ROOT"
+          rsync -a --exclude='.git' --exclude='Binaries' --exclude='Build' --exclude='DerivedDataCache' --exclude='Intermediate' --exclude='Saved' ./ "$ROOT/"
+          (cd "$RUNNER_TEMP/package" && zip -qr "$GITHUB_WORKSPACE/$ARCHIVE" Inkpot)
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$ARCHIVE" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat --printf='%s' "$ARCHIVE")" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_DOWNLOADS_WIF_PROVIDER || vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DOWNLOADS_PUBLISHER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Publish immutable archive and release manifest
+        env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+          SIZE: ${{ steps.package.outputs.size }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          : "${DOWNLOADS_BUCKET:?Set PROSETTA_DOWNLOADS_BUCKET repository variable.}"
+          PREFIX="unreal/inkpot"
+          VERSIONED="gs://$DOWNLOADS_BUCKET/$PREFIX/v$VERSION/$ARCHIVE"
+          gcloud storage cp --if-generation-match=0 "$ARCHIVE" "$VERSIONED"
+          if gcloud storage cat "gs://$DOWNLOADS_BUCKET/$PREFIX/releases.json" > previous.json 2>/dev/null; then :; else printf '%s\n' '{"latest":null,"releases":{}}' > previous.json; fi
+          URL="$DOWNLOADS_BASE_URL/$PREFIX/v$VERSION/$ARCHIVE"
+          jq --arg version "$VERSION" --arg url "$URL" --arg sha "$SHA256" --argjson size "$SIZE" --arg tag "${{ steps.release.outputs.tag }}" --arg commit "$GITHUB_SHA" --argjson stable "$([[ "$PRERELEASE" == false ]] && echo true || echo false)" '
+            .latest = (if $stable then $version else .latest end) |
+            .releases = (.releases // {}) |
+            .releases[$version] = {version: $version, tag: $tag, commit: $commit, releasedAt: now | todateiso8601, artifacts: [{url: $url, sha256: $sha, size: $size}]}
+          ' previous.json > releases.json
+          gcloud storage cp --cache-control='no-cache' releases.json "gs://$DOWNLOADS_BUCKET/$PREFIX/releases.json"
+          if [[ "$PRERELEASE" == false ]]; then
+            gcloud storage cp --cache-control='no-cache' "$ARCHIVE" "gs://$DOWNLOADS_BUCKET/$PREFIX/latest/Inkpot-latest.zip"
+          fi
+
+      - name: Create GitHub release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          printf '%s' "$RELEASE_NOTES" > release-notes.md
+          args=(release create "${{ steps.release.outputs.tag }}" "${{ steps.package.outputs.archive }}" --title "Inkpot ${{ inputs.version }}" --notes-file release-notes.md)
+          if [[ "${{ steps.release.outputs.prerelease }}" == true ]]; then args+=(--prerelease); fi
+          gh "${args[@]}"
