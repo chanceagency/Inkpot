@@ -10,6 +10,7 @@
 #include "Ink/Inklist.h"
 #include "Utility/InkpotLog.h"
 #include "Inkpot/InkpotGameplayTagLibrary.h"
+#include "Inkpot/Prosetta/ProsettaMetadata.h"
 
 void UInkpotStory::Initialise( TSharedPtr<FInkpotStoryInternal>  InInkpotStory )
 {
@@ -1009,6 +1010,16 @@ UInkpotLine *UInkpotStory::GetCurrentLine()
 	UInkpotLine* line = NewObject<UInkpotLine>( this );
 	line->Initialise( GetCurrentText() );
 	return line;
+}
+
+void UInkpotStory::SetProsettaMetadata( UProsettaMetadata *InMetadata )
+{
+	ProsettaMetadata = InMetadata;
+}
+
+UProsettaMetadata *UInkpotStory::GetProsettaMetadata() const
+{
+	return ProsettaMetadata;
 }
 
 void UInkpotStory::ResetContent( TSharedPtr<FInkpotStoryInternal> InNewStoryContent )

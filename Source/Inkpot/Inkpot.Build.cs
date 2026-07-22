@@ -28,7 +28,9 @@ public class Inkpot : ModuleRules
                 "InkPlusPlus",
 
                 "DeveloperSettings",
-                "GameplayTags"
+                "GameplayTags",
+
+                "Json"
             }
         );
 		

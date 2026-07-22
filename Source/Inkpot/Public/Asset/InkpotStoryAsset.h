@@ -39,6 +39,19 @@ public:
 	UFUNCTION(BlueprintPure)
 	const FString& GetCompiledJSON() const;
 
+	/* SetProsettaJSON
+	* Sets the Prosetta sidecar metadata JSON for the Asset.
+	* This is the line metadata exported alongside the compiled Ink and is optional.
+	*/
+	UFUNCTION( BlueprintCallable )
+	void SetProsettaJSON( const FString &JSON );
+
+	/* GetProsettaJSON
+	* Gets the Prosetta sidecar metadata JSON for the Asset, if any.
+	*/
+	UFUNCTION(BlueprintPure)
+	const FString& GetProsettaJSON() const;
+
 #if WITH_EDITOR
 	virtual void PostInitProperties() override;
 	virtual void GetAssetRegistryTags( FAssetRegistryTagsContext Context ) const override;
@@ -61,6 +74,9 @@ private:
 
 	UPROPERTY( VisibleAnywhere, Category="Inkpot|StoryAsset" )
 	FString JSON;
+
+	UPROPERTY( VisibleAnywhere, Category="Inkpot|StoryAsset" )
+	FString ProsettaJSON;
 
 	UPROPERTY(VisibleAnywhere, Category = "Inkpot|StoryAsset")
 	TObjectPtr <UAssetUserData> UserData;

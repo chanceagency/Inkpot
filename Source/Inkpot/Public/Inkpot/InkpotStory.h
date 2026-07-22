@@ -26,6 +26,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams( FOnLineComplete, UInkpotStory*, 
 		BindExternalFunction( TEXT(NameInk), func, false);\
 	}\
 
+class UProsettaMetadata;
+
 UCLASS(BlueprintType)
 class INKPOT_API UInkpotStory : public UObject
 {
@@ -109,6 +111,20 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
 	UInkpotLine *GetCurrentLine();
+
+	/**
+	 * SetProsettaMetadata
+	 * Provides the story with the line metadata parsed from the Prosetta sidecar JSON.
+	 * Used to hydrate <prosetta> tags found in the story text.
+	 */
+	void SetProsettaMetadata( UProsettaMetadata *InMetadata );
+
+	/**
+	 * GetProsettaMetadata
+	 * Returns the Prosetta line metadata for this story, or null if none was supplied.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	UProsettaMetadata *GetProsettaMetadata() const;
 
 	/**
 	 * HasChoices
@@ -977,6 +993,9 @@ private:
 
 	UPROPERTY(Transient)
 	TSet<FName> LineRenderContextsInFlight;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProsettaMetadata> ProsettaMetadata;
 };
 
 

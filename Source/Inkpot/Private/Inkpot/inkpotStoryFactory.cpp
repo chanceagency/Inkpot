@@ -1,8 +1,26 @@
 #include "Inkpot/InkpotStoryFactory.h"
 #include "Inkpot/InkpotStoryInternal.h"
 #include "Inkpot/InkpotStory.h"
+#include "Inkpot/Prosetta/ProsettaMetadata.h"
 #include "Asset/InkpotStoryAsset.h"
 #include "Utility/InkpotLog.h"
+
+namespace
+{
+	// Builds the Prosetta line metadata from the asset's sidecar JSON ( if any ) and
+	// attaches it to the story so <prosetta> tags can be hydrated during playback.
+	void AttachProsettaMetadata(UInkpotStoryAsset* InAsset, UInkpotStory* InStory)
+	{
+		if (!InAsset || !InStory)
+			return;
+		const FString& prosettaJSON = InAsset->GetProsettaJSON();
+		if (prosettaJSON.IsEmpty())
+			return;
+		UProsettaMetadata* metadata = NewObject<UProsettaMetadata>(InStory);
+		if (metadata->LoadFromJSON(prosettaJSON))
+			InStory->SetProsettaMetadata(metadata);
+	}
+}
 
 static FString BadInkJSON{ TEXT("{\"inkVersion\":21,\"root\":[[\"^This is BAD Ink. If you see this your Ink did not import correctly.\",\"\n\",\"end\",[\"done\",{\"#n\":\"g-0\"}],null],\"done\",null],\"listDefs\":{}}") };
 
@@ -54,6 +72,7 @@ UInkpotStory* UInkpotStoryFactory::CreateStory(UInkpotStoryAsset* InInkpotStoryA
 	{
 		UInkpotStory* storyNew = NewObject<UInkpotStory>(InOwner);
 		storyNew->Initialise(storyInternal);
+		AttachProsettaMetadata(InInkpotStoryAsset, storyNew);
 		return storyNew;
 	}
 }

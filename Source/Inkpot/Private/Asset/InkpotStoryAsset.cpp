@@ -26,6 +26,16 @@ const FString& UInkpotStoryAsset::GetCompiledJSON() const
 	return JSON;
 }
 
+void UInkpotStoryAsset::SetProsettaJSON( const FString &InJSON )
+{
+	ProsettaJSON = InJSON;
+}
+
+const FString& UInkpotStoryAsset::GetProsettaJSON() const
+{
+	return ProsettaJSON;
+}
+
 #if WITH_EDITORONLY_DATA
 UAssetImportData* UInkpotStoryAsset::GetAssetImportData()
 {
