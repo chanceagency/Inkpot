@@ -1,8 +1,10 @@
-# Inkpot
-**Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/).<br><br>
+# Inkpot for Prosetta
+**Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
+
 This is a plugin for Unreal Engine 5.7 or later.<br>
 This is version **1.40.21** of the plugin.</br>
 The head revision contains work in progress towards the upcoming release.<br>
+By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 Inkpot is a wrapper for the wonderful narrative scripting language **Ink** developed by [Inkle Studios](https://www.inklestudios.com/ink/).<br>
 
