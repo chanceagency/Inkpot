@@ -2,8 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7 or later.<br>
-This is version **1.40.22** of the plugin.</br>
-The head revision contains work in progress towards the upcoming release.<br>
+This is version **1.40.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -30,13 +29,13 @@ For general support and chat with other users, check out [Inkle's discord](https
 
 ## Changelog  
 
-### Prosetta-specific changes (1.40.22)
+### Prosetta-specific changes (1.40.23)
 These changes apply to Inkpot's Prosetta integration, not to Inkpot's core Ink runtime.<br>
 Prosetta Line IDs now use `FName` throughout import and runtime handling, avoiding repeated string comparisons.<br>
 Sidecar metadata parsing supports Unreal's shared-string JSON keys and reserves storage to reduce allocations.<br>
 Documented Prosetta tag parsing and ID requirements above.<br>
 
-### Inkpot core compatibility (1.40.22)
+### Inkpot core compatibility (1.40.23)
 Read the first Ink list entry directly in `ToGameplayTag`, avoiding a Clang 21 loop warning without changing its result.<br>
 
 ### Changes in 1.40.21
