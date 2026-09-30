@@ -33,7 +33,11 @@ For general support and chat with other users, check out [Inkle's discord](https
 ### Prosetta-specific changes (1.40.22)
 These changes apply to Inkpot's Prosetta integration, not to Inkpot's core Ink runtime.<br>
 Prosetta Line IDs now use `FName` throughout import and runtime handling, avoiding repeated string comparisons.<br>
-Reserved parser and metadata storage to reduce allocations, and documented Prosetta tag parsing and ID requirements above.<br>
+Sidecar metadata parsing supports Unreal's shared-string JSON keys and reserves storage to reduce allocations.<br>
+Documented Prosetta tag parsing and ID requirements above.<br>
+
+### Inkpot core compatibility (1.40.22)
+Read the first Ink list entry directly in `ToGameplayTag`, avoiding a Clang 21 loop warning without changing its result.<br>
 
 ### Changes in 1.40.21
 Updated to build with Unreal 5.8 whilst maintaining compatibility with 5.7.<br>

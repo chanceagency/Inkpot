@@ -14,7 +14,7 @@ namespace
 		{
 			FString value;
 			if (pair.Value.IsValid() && pair.Value->TryGetString(value))
-				OutMap.Add(pair.Key, value);
+				OutMap.Add(FString(*pair.Key), value);
 		}
 	}
 
