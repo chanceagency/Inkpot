@@ -29,14 +29,14 @@ public:
 	 * @param InStart       offset of this segment's text within the cleaned fragment.
 	 * @param InLength      length of this segment's text within the cleaned fragment.
 	 */
-	void Initialise(const FString& InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength);
+	void Initialise(FName InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength);
 
 	/** Apply the authored metadata resolved for this line's id. */
 	void SetMetadata(const FProsettaLineMetadata& InMetadata, bool bInResolved);
 
 	/** The 'id' attribute of the source tag (e.g. "023A"). */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
-	const FString& GetLineId() const;
+	FName GetLineId() const;
 
 	/** The player-facing text for this segment. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
@@ -68,7 +68,7 @@ public:
 
 private:
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
-	FString LineId;
+	FName LineId;
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
 	FString Text;

@@ -35,7 +35,7 @@ namespace
 
 	// Splits the text found between the tag name and its closing '>' into an id and the
 	// remaining data attributes. Supports single quoted, double quoted, and bare values.
-	void ParseAttributes(const FString& InAttrText, FString& OutLineId, TMap<FName, FString>& OutAttributes)
+	void ParseAttributes(const FString& InAttrText, FName& OutLineId, TMap<FName, FString>& OutAttributes)
 	{
 		const int32 len = InAttrText.Len();
 		int32 i = 0;
@@ -77,7 +77,7 @@ namespace
 			}
 
 			if (key.Equals(TEXT("id"), ESearchCase::IgnoreCase))
-				OutLineId = value;
+				OutLineId = FName(*value);
 			else
 				OutAttributes.Add(FName(*key), value);
 
@@ -92,6 +92,7 @@ FProsettaParseResult UInkpotProsettaLibrary::ParseFragmentResolved(const FString
 	FString& clean = result.CleanText;
 
 	const int32 len = InFragment.Len();
+	clean.Reserve(len);
 	int32 cursor = 0;
 
 	while (cursor < len)
@@ -196,7 +197,7 @@ FProsettaParseResult UInkpotProsettaLibrary::ParseFragmentResolved(const FString
 
 FProsettaParseResult UInkpotProsettaLibrary::ParseFragment(const FString& InFragment)
 {
-	return ParseFragmentResolved(InFragment, [](const FString&, FString&) { return false; });
+	return ParseFragmentResolved(InFragment, [](FName, FString&) { return false; });
 }
 
 FString UInkpotProsettaLibrary::StripTags(const FString& InFragment)

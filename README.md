@@ -2,9 +2,23 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7 or later.<br>
-This is version **1.40.21** of the plugin.</br>
+This is version **1.40.22** of the plugin.</br>
 The head revision contains work in progress towards the upcoming release.<br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
+
+## Prosetta line tags
+
+Inkpot recognizes inline `<prosetta>` elements in story text to associate a piece of dialogue with a Prosetta ProseLine ID and optional data attributes. A tag can contain fallback text:
+
+```ink
+The driver says <prosetta id="023A" animate="wave" sfx="carHorn.mp3">Honk honk!</prosetta>
+```
+
+The `id` attribute identifies the Prosetta line. Prosetta Line IDs use the [Crockford Base32](https://www.crockford.com/base32.html) notation— case-insensitive, fixed-length, alphanumeric IDs which omit a few commonly-confused characters. Prosetta API routes always return IDs in all-caps, e.g. `5A0Z`; Inkpot consumes them as `FName` values without changing their spelling. Other attributes, such as `animate` and `sfx`, are preserved as name/value pairs for gameplay code.
+
+During playback, Inkpot scans the emitted text for `<prosetta>` tags, removes the tag markup, and returns the remaining player-facing text. It resolves IDs against the story's imported Prosetta sidecar when one is available, using the authored ProseLine string in place of the text inside the tag. If no authored string is available, the tag's inner text is used. Each parsed segment also reports its ID, attributes, chosen text, and that text's offset and length in the cleaned result.
+
+The parser accepts single-quoted, double-quoted, and unquoted attribute values, as well as self-closing tags. Tag names and the `id` attribute name are matched without regard to case. Nested Prosetta elements are handled by matching their depth. If an opening tag is malformed or has no matching close tag, the unmatched remainder is kept as literal text.
 
 Inkpot is a wrapper for the wonderful narrative scripting language **Ink** developed by [Inkle Studios](https://www.inklestudios.com/ink/).<br>
 
@@ -15,6 +29,15 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.40.22)
+These changes apply to Inkpot's Prosetta integration, not to Inkpot's core Ink runtime.<br>
+Prosetta Line IDs now use `FName` throughout import and runtime handling, avoiding repeated string comparisons.<br>
+Sidecar metadata parsing supports Unreal's shared-string JSON keys and reserves storage to reduce allocations.<br>
+Documented Prosetta tag parsing and ID requirements above.<br>
+
+### Inkpot core compatibility (1.40.22)
+Read the first Ink list entry directly in `ToGameplayTag`, avoiding a Clang 21 loop warning without changing its result.<br>
 
 ### Changes in 1.40.21
 Updated to build with Unreal 5.8 whilst maintaining compatibility with 5.7.<br>

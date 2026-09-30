@@ -14,11 +14,11 @@ namespace
 		{
 			FString value;
 			if (pair.Value.IsValid() && pair.Value->TryGetString(value))
-				OutMap.Add(pair.Key, value);
+				OutMap.Add(FString(*pair.Key), value);
 		}
 	}
 
-	FProsettaLineMetadata ReadLine(const FString& InLineId, const TSharedPtr<FJsonObject>& InObject)
+	FProsettaLineMetadata ReadLine(FName InLineId, const TSharedPtr<FJsonObject>& InObject)
 	{
 		FProsettaLineMetadata meta;
 		meta.LineId = InLineId;
@@ -52,11 +52,15 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 	const TSharedPtr<FJsonObject>* linesObject = nullptr;
 	if (root->TryGetObjectField(TEXT("lines"), linesObject) && linesObject->IsValid())
 	{
+		Lines.Reserve((*linesObject)->Values.Num());
 		for (const auto& pair : (*linesObject)->Values)
 		{
 			const TSharedPtr<FJsonObject>* lineObject = nullptr;
 			if (pair.Value.IsValid() && pair.Value->TryGetObject(lineObject) && lineObject->IsValid())
-				Lines.Add(pair.Key, ReadLine(pair.Key, *lineObject));
+			{
+				const FName lineId(*pair.Key);
+				Lines.Add(lineId, ReadLine(lineId, *lineObject));
+			}
 		}
 	}
 	else
@@ -64,6 +68,7 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 		const TArray<TSharedPtr<FJsonValue>>* linesArray = nullptr;
 		if (root->TryGetArrayField(TEXT("lines"), linesArray))
 		{
+			Lines.Reserve(linesArray->Num());
 			for (const TSharedPtr<FJsonValue>& value : *linesArray)
 			{
 				const TSharedPtr<FJsonObject>* lineObject = nullptr;
@@ -74,7 +79,8 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 					(*lineObject)->TryGetStringField(TEXT("lineId"), lineId);
 				if (lineId.IsEmpty())
 					continue;
-				Lines.Add(lineId, ReadLine(lineId, *lineObject));
+				const FName nameLineId(*lineId);
+				Lines.Add(nameLineId, ReadLine(nameLineId, *lineObject));
 			}
 		}
 	}
@@ -82,7 +88,7 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 	return Lines.Num() > 0;
 }
 
-bool UProsettaMetadata::Resolve(const FString& InLineId, FProsettaLineMetadata& OutMetadata) const
+bool UProsettaMetadata::Resolve(FName InLineId, FProsettaLineMetadata& OutMetadata) const
 {
 	if (const FProsettaLineMetadata* found = Lines.Find(InLineId))
 	{
@@ -92,7 +98,7 @@ bool UProsettaMetadata::Resolve(const FString& InLineId, FProsettaLineMetadata& 
 	return false;
 }
 
-bool UProsettaMetadata::ResolveText(const FString& InLineId, FString& OutText) const
+bool UProsettaMetadata::ResolveText(FName InLineId, FString& OutText) const
 {
 	const FProsettaLineMetadata* found = Lines.Find(InLineId);
 	if (found && !found->String.IsEmpty())

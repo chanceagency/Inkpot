@@ -18,7 +18,7 @@ void UInkpotLine::Initialise(const FString &InString)
 	UInkpotStory* story = GetStory();
 	UProsettaMetadata* metadata = story ? story->GetProsettaMetadata() : nullptr;
 
-	auto resolver = [metadata](const FString& InLineId, FString& OutText) -> bool
+	auto resolver = [metadata](FName InLineId, FString& OutText) -> bool
 	{
 		return metadata ? metadata->ResolveText(InLineId, OutText) : false;
 	};

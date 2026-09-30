@@ -83,12 +83,12 @@ FInkpotList UInkpotListLibrary::MakeInkpotListFromGameplayTag(UInkpotStory *InSt
 void UInkpotListLibrary::ToGameplayTag(const FInkpotList &Value, FGameplayTag &ReturnValue)
 {
 	Ink::FInkList &list = Value.GetList();
-	for( auto &pair : list )
-	{
-		FString sTag = FString::Printf(TEXT("%s%s"),INK_ORIGIN_GAMEPLAYTAG_PREFIX, *pair.Key.GetFullName() );
-		ReturnValue = FGameplayTag::RequestGameplayTag(FName(sTag));
-		break;
-	}
+	if (list.IsEmpty())
+		return;
+
+	const auto& pair = *list.CreateConstIterator();
+	FString sTag = FString::Printf(TEXT("%s%s"), INK_ORIGIN_GAMEPLAYTAG_PREFIX, *pair.Key.GetFullName());
+	ReturnValue = FGameplayTag::RequestGameplayTag(FName(sTag));
 }
 
 FInkpotList UInkpotListLibrary::MakeInkpotListFromGameplayTags(UInkpotStory *InStory, FGameplayTagContainer InTags)
@@ -281,4 +281,3 @@ const FInkpotList& UInkpotListLibrary::Validate(UInkpotStory *InStory, const FIn
 	A.ValidateOrigin(InStory);
 	return A;
 }
-
