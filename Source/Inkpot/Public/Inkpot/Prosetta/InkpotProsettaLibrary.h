@@ -22,7 +22,7 @@ class INKPOT_API UInkpotProsettaLibrary : public UBlueprintFunctionLibrary
 public:
 	/** A resolver decides the display text for a given line id, returning true if it
 	 *  supplied an authoritative replacement for the tag's inner text. */
-	using FTextResolver = TFunctionRef<bool(const FString& /*LineId*/, FString& /*OutText*/)>;
+	using FTextResolver = TFunctionRef<bool(FName /*LineId*/, FString& /*OutText*/)>;
 
 	/**
 	 * ParseFragmentResolved

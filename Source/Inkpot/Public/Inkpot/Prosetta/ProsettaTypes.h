@@ -16,7 +16,7 @@ struct INKPOT_API FProsettaLineMetadata
 
 	/** The 4 character base-35 line id this metadata was keyed by (e.g. "023A"). */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
-	FString LineId;
+	FName LineId;
 
 	/** The authoritative, player-facing line text (ProseLine.string). */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
@@ -51,7 +51,7 @@ struct INKPOT_API FProsettaParsedSegment
 
 	/** The value of the tag's 'id' attribute. */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
-	FString LineId;
+	FName LineId;
 
 	/** The display text chosen for this segment ( resolved string, else tag inner text ). */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")

@@ -37,11 +37,11 @@ public:
 
 	/** Resolve the full metadata for a line id. Returns true when found. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
-	bool Resolve(const FString& InLineId, FProsettaLineMetadata& OutMetadata) const;
+	bool Resolve(FName InLineId, FProsettaLineMetadata& OutMetadata) const;
 
 	/** Resolve the authoritative display string for a line id. Returns true when a
 	 *  non-empty string is available. */
-	bool ResolveText(const FString& InLineId, FString& OutText) const;
+	bool ResolveText(FName InLineId, FString& OutText) const;
 
 	/** Number of lines loaded. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
@@ -52,5 +52,5 @@ public:
 
 private:
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
-	TMap<FString, FProsettaLineMetadata> Lines;
+	TMap<FName, FProsettaLineMetadata> Lines;
 };

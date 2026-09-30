@@ -31,7 +31,7 @@ bool FProsettaParserTest::RunTest(const FString& InParameters)
 		if (TestEqual(TEXT("one segment"), result.Segments.Num(), 1))
 		{
 			const FProsettaParsedSegment& seg = result.Segments[0];
-			TestEqual(TEXT("line id"), seg.LineId, TEXT("023A"));
+			TestEqual(TEXT("line id"), seg.LineId, FName(TEXT("023A")));
 			TestEqual(TEXT("segment start"), seg.StartOffset, 0);
 			TestEqual(TEXT("segment length"), seg.Length, result.CleanText.Len());
 			TestEqual(TEXT("attr count"), seg.Attributes.Num(), 2);
@@ -44,11 +44,12 @@ bool FProsettaParserTest::RunTest(const FString& InParameters)
 
 	// Surrounding prose and offsets are preserved.
 	{
-		const FString fragment = TEXT("She said <prosetta id='bb3'>hello</prosetta> warmly.");
+		const FString fragment = TEXT("She said <prosetta id='0BB3'>hello</prosetta> warmly.");
 		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragment(fragment);
 		TestEqual(TEXT("prose preserved"), result.CleanText, TEXT("She said hello warmly."));
 		if (TestEqual(TEXT("one segment"), result.Segments.Num(), 1))
 		{
+			TestEqual(TEXT("line id preserved"), result.Segments[0].LineId.ToString(), FString(TEXT("0BB3")));
 			TestEqual(TEXT("offset after prefix"), result.Segments[0].StartOffset, 9);
 			TestEqual(TEXT("segment length"), result.Segments[0].Length, 5);
 		}
@@ -58,9 +59,9 @@ bool FProsettaParserTest::RunTest(const FString& InParameters)
 	// cleaned output, and offsets reflect the replacement.
 	{
 		const FString fragment = TEXT("<prosetta id='023A'>placeholder</prosetta>");
-		auto resolver = [](const FString& InLineId, FString& OutText) -> bool
+		auto resolver = [](FName InLineId, FString& OutText) -> bool
 		{
-			if (InLineId == TEXT("023A")) { OutText = TEXT("Honk honk!"); return true; }
+			if (InLineId == FName(TEXT("023A"))) { OutText = TEXT("Honk honk!"); return true; }
 			return false;
 		};
 		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragmentResolved(fragment, resolver);
@@ -106,12 +107,13 @@ bool FProsettaMetadataTest::RunTest(const FString& InParameters)
 	TestEqual(TEXT("one line"), metadata->Num(), 1);
 
 	FString text;
-	TestTrue(TEXT("resolve text"), metadata->ResolveText(TEXT("023A"), text));
+	TestTrue(TEXT("resolve text"), metadata->ResolveText(FName(TEXT("023A")), text));
 	TestEqual(TEXT("authoritative string"), text, TEXT("Honk honk, mothertrucker!"));
 
 	FProsettaLineMetadata line;
-	if (TestTrue(TEXT("resolve metadata"), metadata->Resolve(TEXT("023A"), line)))
+	if (TestTrue(TEXT("resolve metadata"), metadata->Resolve(FName(TEXT("023A")), line)))
 	{
+		TestEqual(TEXT("sidecar line id preserved"), line.LineId.ToString(), FString(TEXT("023A")));
 		TestEqual(TEXT("kind"), line.Kind, TEXT("dialogue"));
 		TestEqual(TEXT("speaker"), line.SpeakerShortname, TEXT("TRUCKER"));
 		const FString* mood = line.Tags.Find(TEXT("mood"));
@@ -121,7 +123,7 @@ bool FProsettaMetadataTest::RunTest(const FString& InParameters)
 	}
 
 	FProsettaLineMetadata missing;
-	TestFalse(TEXT("unknown id unresolved"), metadata->Resolve(TEXT("ZZZZ"), missing));
+	TestFalse(TEXT("unknown id unresolved"), metadata->Resolve(FName(TEXT("ZZZZ")), missing));
 
 	return true;
 }

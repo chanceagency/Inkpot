@@ -1,6 +1,6 @@
 #include "Inkpot/Prosetta/ProsettaLine.h"
 
-void UProsettaLine::Initialise(const FString& InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength)
+void UProsettaLine::Initialise(FName InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength)
 {
 	LineId = InLineId;
 	Text = InText;
@@ -15,7 +15,7 @@ void UProsettaLine::SetMetadata(const FProsettaLineMetadata& InMetadata, bool bI
 	bResolved = bInResolved;
 }
 
-const FString& UProsettaLine::GetLineId() const
+FName UProsettaLine::GetLineId() const
 {
 	return LineId;
 }
