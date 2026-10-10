@@ -1301,7 +1301,9 @@ void UInkpotStory::ApplyStoryErrorPolicy( const FString &InMessage, EInkpotStory
 
 	if (settings->bStoryErrorsToMessageLog)
 	{
+		// Already logged above; don't let the Message Log mirror it to the output log again.
 		FMessageLog log( "Inkpot" );
+		log.SuppressLoggingToOutputLog();
 		TSharedRef<FTokenizedMessage> tokenized = bError ? log.Error() : log.Warning();
 		tokenized->AddToken( FTextToken::Create( FText::FromString( message ) ) );
 	}
