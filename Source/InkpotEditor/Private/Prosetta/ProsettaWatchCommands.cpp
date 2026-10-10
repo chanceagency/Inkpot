@@ -36,13 +36,13 @@ namespace
     UE_LOG(LogTemp, Display, TEXT("Prosetta: %s"), *watch->GetStatus());
    }
   }));
- FAutoConsoleCommand Native(TEXT("Prosetta.Watch.ImportNative"), TEXT("Explicit C++ source import: Prosetta.Watch.ImportNative \"namespace\" \"absolute destination\"; review and rebuild afterward."),
+ FAutoConsoleCommand Native(TEXT("Prosetta.Watch.ImportNative"), TEXT("Explicit C++ source import: Prosetta.Watch.ImportNative \"namespace\" \"absolute destination\" [generate]; 'generate' also validates the modules against the manifest and writes <Module>.Bindings.cpp loaders. Review and rebuild afterward."),
   FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
   {
    if (auto* watch = Watch())
    {
-    if (Args.Num() != 2) { UE_LOG(LogTemp, Warning, TEXT("Expected applied namespace and absolute C++ source destination.")); return; }
-    watch->ImportNativeSources(Args[0], Args[1]);
+    if (Args.Num() < 2 || Args.Num() > 3 || (Args.Num() == 3 && !Args[2].Equals(TEXT("generate"), ESearchCase::IgnoreCase))) { UE_LOG(LogTemp, Warning, TEXT("Expected applied namespace, absolute C++ source destination, and optional 'generate'.")); return; }
+    watch->ImportNativeSources(Args[0], Args[1], Args.Num() == 3);
     UE_LOG(LogTemp, Display, TEXT("Prosetta: %s"), *watch->GetStatus());
    }
   }));
