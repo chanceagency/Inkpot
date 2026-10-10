@@ -39,9 +39,13 @@ namespace
 		const FInkpotNativeBindingGenerationReport report = FInkpotNativeBindingGenerator::Run(Args[0], bManifest ? &manifest : nullptr, bWrite);
 		UE_LOG(LogTemp, Display, TEXT("%s"), *report.ToString());
 		if (!report.bOk)
+		{
 			UE_LOG(LogTemp, Error, TEXT("Prosetta native bindings: %d error(s); see above."), report.Errors.Num());
+		}
 		else if (bWrite && report.NumWritten() > 0)
+		{
 			UE_LOG(LogTemp, Display, TEXT("Prosetta native bindings: %d loader(s) written; rebuild the game module to register them."), report.NumWritten());
+		}
 	}
 
 	FAutoConsoleCommand Scan(TEXT("Prosetta.NativeBindings.Scan"),

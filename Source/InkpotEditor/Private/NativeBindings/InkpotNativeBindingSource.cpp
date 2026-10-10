@@ -180,8 +180,8 @@ FString FInkpotNativeBindingSourceFunction::Signature() const
 {
 	TArray<FString> parameters;
 	for (const FInkpotNativeBindingSourceParameter& parameter : Parameters)
-		parameters.Add(parameter.Name.IsEmpty() ? parameter.Type : (parameter.Type.EndsWith(TEXT("*")) ? parameter.Type + parameter.Name : parameter.Type + TEXT(" ") + parameter.Name));
-	return FString::Printf(TEXT("%s%s%s(%s)"), *ReturnType, ReturnType.EndsWith(TEXT("*")) ? TEXT("") : TEXT(" "), *Name, *FString::Join(parameters, TEXT(", ")));
+		parameters.Add(parameter.Name.IsEmpty() ? parameter.Type : parameter.Type + TEXT(" ") + parameter.Name);
+	return FString::Printf(TEXT("%s %s(%s)"), *ReturnType, *Name, *FString::Join(parameters, TEXT(", ")));
 }
 
 FString FInkpotNativeBindingSourceDiagnostic::ToString() const

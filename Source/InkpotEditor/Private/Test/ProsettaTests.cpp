@@ -125,6 +125,14 @@ bool FProsettaMetadataTest::RunTest(const FString& InParameters)
 	FProsettaLineMetadata missing;
 	TestFalse(TEXT("unknown id unresolved"), metadata->Resolve(FName(TEXT("ZZZZ")), missing));
 
+	// Engine Sync records carry both a database id and the tag's lineId.
+	TestTrue(TEXT("load Engine Sync array"), metadata->LoadFromJSON(TEXT(R"JSON(
+		{"lines":[{"id":"23-0001","lineId":"0001","string":"Hello","speakerShortname":"QUEEN"}]}
+	)JSON")));
+	TestTrue(TEXT("join by tag lineId"), metadata->Resolve(FName(TEXT("0001")), line));
+	TestEqual(TEXT("Engine Sync speaker"), line.SpeakerShortname, TEXT("QUEEN"));
+	TestFalse(TEXT("record id is not the join key"), metadata->Resolve(FName(TEXT("23-0001")), missing));
+
 	return true;
 }
 

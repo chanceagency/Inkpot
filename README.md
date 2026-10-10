@@ -154,7 +154,7 @@ External functions are now implemented, along with functional tests.<br>
 Initial release.<br>
 
 ## Requirements 
-Inkpot requires Unreal Engine 5.7.4 (the latest 5.7 patch) or later. This is enforced in each module's `.Build.cs`, which fails the build on older engines.<br>
+Inkpot requires Unreal Engine 5.7.4 (the latest 5.7 patch) or later. This is enforced in each module's `.Build.cs`, which fails the build on older engines. The `.uplugin` deliberately has no `EngineVersion` field: Unreal treats it as the exact engine the plugin was built for, so newer engines (e.g. 5.8) would refuse to load the plugin.<br>
 Inkpot includes a C++ port of Ink-engine-runtime version 21, which can be found in the InkPlusPlus module.<br>
 
 ### .Net framework 5.0

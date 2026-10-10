@@ -75,8 +75,8 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 				if (!value.IsValid() || !value->TryGetObject(lineObject) || !lineObject->IsValid())
 					continue;
 				FString lineId;
-				if (!(*lineObject)->TryGetStringField(TEXT("id"), lineId))
-					(*lineObject)->TryGetStringField(TEXT("lineId"), lineId);
+				if (!(*lineObject)->TryGetStringField(TEXT("lineId"), lineId))
+					(*lineObject)->TryGetStringField(TEXT("id"), lineId);
 				if (lineId.IsEmpty())
 					continue;
 				const FName nameLineId(*lineId);
