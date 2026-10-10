@@ -1,4 +1,6 @@
 #include "Prosetta/ProsettaWatchSubsystem.h"
+#include "NativeBindings/InkpotNativeBindingGenerator.h"
+#include "Inkpot/Prosetta/ProsettaNativeBindingsManifest.h"
 #include "Prosetta/ProsettaChecksum.h"
 #include "Asset/InkpotStoryAssetFactory.h"
 #include "Inkpot/Prosetta/ProsettaSyncedArtifact.h"
@@ -402,6 +404,12 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
   {
    story->SetCompiledJSON(candidate.Text);
    story->SetProsettaJSON(metadata);
+   // Provenance: project / channel / volume / generation from the event and manifest, build id from the artifact checksum.
+   FProsettaStoryProvenance provenanceInfo;
+   FProsettaStoryProvenance::FromSyncManifest(manifest, event, candidate.Key.StartsWith(TEXT("compiled-story:")) ? candidate.Key.RightChop(15) : FString(), provenanceInfo);
+   provenanceInfo.Namespace = name;
+   provenanceInfo.BuildId = candidate.Checksum.ToLower();
+   story->SetProsettaProvenance(provenanceInfo);
    story->UpdateAssetInfo(candidate.Path);
   }
   else if (UProsettaSyncedArtifact* supporting = Cast<UProsettaSyncedArtifact>(asset))
@@ -518,7 +526,7 @@ int32 UProsettaWatchSubsystem::CleanupRetiredAssets(const FString& Namespace)
  return deleted;
 }
 
-bool UProsettaWatchSubsystem::ImportNativeSources(const FString& Namespace, const FString& Destination)
+bool UProsettaWatchSubsystem::ImportNativeSources(const FString& Namespace, const FString& Destination, bool bGenerateLoaders)
 {
  if (!IsSafeToApply()) { Status = TEXT("Native source import waits for Play stop/editor idle."); return false; }
  FString rootValue;
@@ -559,6 +567,16 @@ bool UProsettaWatchSubsystem::ImportNativeSources(const FString& Namespace, cons
   IFileManager::Get().MakeDirectory(*FPaths::GetPath(copy.Target), true);
   if (IFileManager::Get().Copy(*copy.Target, *copy.Source, true, true) != COPY_OK) { Status = TEXT("Native source copy failed."); return false; }
  }
- Status = TEXT("Native C++ sources explicitly imported; rebuild required.");
+ if (!bGenerateLoaders) { Status = TEXT("Native C++ sources explicitly imported; rebuild required."); return true; }
+ // Validate the imported modules against the generation's manifest and write their Inkpot loaders.
+ FProsettaNativeBindingsManifest nativeManifest;
+ FString manifestError;
+ const FString manifestPath = *root / FProsettaNativeBindingsManifest::RelativePath();
+ const bool bManifest = FPaths::FileExists(manifestPath) && FProsettaNativeBindingsManifest::LoadFile(manifestPath, nativeManifest, manifestError);
+ if (!bManifest && !manifestError.IsEmpty()) { Status = TEXT("Native bindings manifest rejected: ") + manifestError; return false; }
+ const FInkpotNativeBindingGenerationReport report = FInkpotNativeBindingGenerator::Run(Destination, bManifest ? &nativeManifest : nullptr, true);
+ UE_LOG(LogTemp, Display, TEXT("%s"), *report.ToString());
+ if (!report.bOk) { Status = FString::Printf(TEXT("Native C++ sources imported but %d loader validation error(s) were found; see the log."), report.Errors.Num()); return false; }
+ Status = FString::Printf(TEXT("Native C++ sources imported and %d loader(s) generated ( %d written ); rebuild required."), report.Loaders.Num(), report.NumWritten());
  return true;
 }

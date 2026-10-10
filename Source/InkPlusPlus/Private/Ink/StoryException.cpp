@@ -8,7 +8,10 @@ namespace Ink
 
 	void FStoryExceptionSubstitute::Throw(const FString& InMessage, bool InUseEndLineNumber)
 	{
-		UE_LOG(InkPlusPlus, Error, TEXT("%s"), *InMessage);
+		if (OnThrow.IsBound())
+			OnThrow.Broadcast(InMessage);
+		else
+			UE_LOG(InkPlusPlus, Error, TEXT("%s"), *InMessage);
 		// hasException = true;
 		message = InMessage;
 		useEndLineNumber = InUseEndLineNumber;

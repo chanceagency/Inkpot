@@ -1,4 +1,5 @@
 #include "Inkpot/Prosetta/InkpotProsettaLibrary.h"
+#include "Misc/Paths.h"
 
 namespace
 {
@@ -203,4 +204,19 @@ FProsettaParseResult UInkpotProsettaLibrary::ParseFragment(const FString& InFrag
 FString UInkpotProsettaLibrary::StripTags(const FString& InFragment)
 {
 	return ParseFragment(InFragment).CleanText;
+}
+
+bool UInkpotProsettaLibrary::LoadSyncManifestProvenance(const FString& ManifestFilename, const FString& VolumeSlug, FProsettaStoryProvenance& OutProvenance)
+{
+	return FProsettaStoryProvenance::FromSyncManifestFile(ManifestFilename, VolumeSlug, OutProvenance);
+}
+
+FString UInkpotProsettaLibrary::GetDefaultSyncManifestPath()
+{
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Prosetta") / TEXT("manifest.json"));
+}
+
+FString UInkpotProsettaLibrary::ProvenanceToLogString(const FProsettaStoryProvenance& Provenance)
+{
+	return Provenance.ToLogString();
 }

@@ -6,6 +6,9 @@
 #include "Inkpot/InkpotLine.h"
 #include "Inkpot/InkpotValue.h"
 #include "Inkpot/InkpotList.h"
+#include "Inkpot/NativeBindings/InkpotNativeBindingTypes.h"
+#include "Inkpot/NativeBindings/InkpotNativeBindingRegistry.h"
+#include "Inkpot/Prosetta/ProsettaTypes.h"
 #include "Utility/InkpotLog.h"
 #include "InkpotStory.generated.h"
 
@@ -18,6 +21,19 @@ DECLARE_DYNAMIC_DELEGATE_RetVal_OneParam(FInkpotValue, FInkpotExternalFunction, 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStoryLoadJSON, UInkpotStory*, Story );
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams( FOnLineComplete, UInkpotStory*, Story, const FName&, Context, bool, bSuccess );
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams( FOnFlowEnded, UInkpotStory*, Story, const FString&, FlowName );
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams( FOnInkpotStoryError, UInkpotStory*, Story, const FString&, Message, EInkpotStoryErrorType, ErrorType );
+DECLARE_MULTICAST_DELEGATE_ThreeParams( FOnInkpotStoryErrorNative, UInkpotStory*, const FString&, EInkpotStoryErrorType );
+
+
+/** Handle returned by the native observer API; pass it back to RemoveVariableObserver. */
+struct INKPOT_API FInkpotVariableObserverHandle
+{
+	bool IsValid() const { return Id != 0; }
+	uint64 Id = 0;
+};
+
+/** Native ( C++ ) variable change callback. */
+using FInkpotVariableChangeNative = TFunction<void(UInkpotStory* /*Story*/, const FString& /*Variable*/, const FInkpotValue& /*NewValue*/)>;
 
 // macro for binding functions in your derived story classes
 #define BindInkFunction( NameInk, NameCPP ) \
@@ -784,6 +800,144 @@ public:
 	void UnbindExternalFunction( const FString &FunctionName );
 
 	/**
+	 * IsExternalFunctionBound
+	 * Whether something is bound to the named EXTERNAL ( Blueprint, C++ delegate or native module ).
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	bool IsExternalFunctionBound( const FString &FunctionName ) const;
+
+	/**
+	 * GetDeclaredExternalFunctions
+	 * Every EXTERNAL the compiled story calls, with its arity, recovered by walking the
+	 * story content ( the compiler only emits declarations that are used ).
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	TArray<FInkpotExternalDeclaration> GetDeclaredExternalFunctions() const;
+
+	/**
+	 * ValidateExternalBindings
+	 * Checks that every EXTERNAL the story calls is bound ( or has an Ink fallback when
+	 * fallbacks are allowed ). The Ink VM aborts when it reaches an unbound EXTERNAL, so
+	 * call this before the first Continue; it also runs automatically on the first
+	 * Continue when the Inkpot setting bValidateExternalBindingsOnFirstContinue is on.
+	 *
+	 * @param OutUnbound - Names of EXTERNALs that are neither bound nor covered by a fallback.
+	 * @param bLogErrors - Log one error per unbound EXTERNAL.
+	 * @returns True when nothing is unbound.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	bool ValidateExternalBindings( TArray<FString> &OutUnbound, bool bLogErrors = true );
+
+	/**
+	 * BindRegisteredNativeFunctions
+	 * Binds the C++ native binding modules registered with Inkpot ( Prosetta synced
+	 * modules and local modules alike ) to this story's EXTERNALs. Only functions the
+	 * story actually calls are bound, so unrelated modules cost nothing.
+	 *
+	 * @param ModuleFilter - Restrict to these module names; empty binds every module.
+	 * @param bOverrideExisting - Replace functions already bound under the same name.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story", meta=(AutoCreateRefTerm="ModuleFilter"))
+	FInkpotNativeBindingReport BindRegisteredNativeFunctions( const TArray<FString> &ModuleFilter, bool bOverrideExisting = false );
+
+	/**
+	 * BindNativeFunction
+	 * Binds one registered-style native function ( see FInkpotNativeFunction::Make ).
+	 * Returns false when the name is already bound and bOverrideExisting is false.
+	 */
+	bool BindNativeFunction( const FInkpotNativeFunction &Function, bool bOverrideExisting = false );
+
+	/**
+	 * BindNativeFunction ( template )
+	 * Binds a plain C++ function directly, inkcpp style: BindNativeFunction( TEXT("add"), &Add, true );
+	 * Parameters may be int, float, bool or const char*; the return type may also be void.
+	 */
+	template<typename R, typename... Args>
+	bool BindNativeFunction( const FString &FunctionName, R (*Function)(Args...), bool bLookaheadSafe = false, bool bOverrideExisting = false );
+
+	/**
+	 * SetAllowExternalFunctionFallbacks
+	 * When true, an unbound EXTERNAL diverts to an Ink function of the same name if one exists.
+	 * Defaults to the Inkpot setting bAllowExternalFunctionFallbacks.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	void SetAllowExternalFunctionFallbacks( bool bAllow );
+
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	bool GetAllowExternalFunctionFallbacks() const;
+
+	/**
+	 * GetGlobalVariableNames
+	 * Names of every global VAR declared by the story.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	TArray<FString> GetGlobalVariableNames() const;
+
+	/**
+	 * SetOnAnyVariableChange
+	 * Binds a delegate to changes of every global variable in the story.
+	 *
+	 * @param Delegate - The delegate to call with the variable name and new value.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	void SetOnAnyVariableChange( UPARAM(DisplayName="Event") FOnInkpotVariableChange Delegate );
+
+	/**
+	 * ClearAnyVariableChange
+	 * Clears delegate bindings created by SetOnAnyVariableChange for the given owner.
+	 */
+	UFUNCTION(BlueprintCallable, Meta = (DefaultToSelf = "Owner", ExpandBoolAsExecs = "ReturnValue"), Category="Inkpot|Story")
+	bool ClearAnyVariableChange( const UObject* Owner );
+
+	/**
+	 * ObserveVariableNative
+	 * C++ variable observer with a lambda. The story owns the observer; remove it with
+	 * RemoveVariableObserver, or let it die with the story.
+	 */
+	FInkpotVariableObserverHandle ObserveVariableNative( const FString &Variable, FInkpotVariableChangeNative Callback );
+
+	/** ObserveAllVariablesNative - as ObserveVariableNative, for every global variable. */
+	FInkpotVariableObserverHandle ObserveAllVariablesNative( FInkpotVariableChangeNative Callback );
+
+	/** RemoveVariableObserver - removes an observer created by the native observer API. */
+	bool RemoveVariableObserver( const FInkpotVariableObserverHandle &Handle );
+
+	/** OnStoryError - C++ access to runtime errors and warnings reported by the Ink VM. */
+	FOnInkpotStoryErrorNative& OnStoryError();
+
+	/**
+	 * ReportStoryError
+	 * Routes a message through Inkpot's story error policy ( UInkpotSettings: broadcast,
+	 * log, Message Log, screen, ensure or fatal ) exactly as a runtime error from the Ink
+	 * VM would be. Game code can use it for its own story-level problems so they carry
+	 * the same story / Prosetta provenance prefix.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	void ReportStoryError( const FString &Message, EInkpotStoryErrorType ErrorType = EInkpotStoryErrorType::Error );
+
+	/**
+	 * SetProsettaProvenance / GetProsettaProvenance
+	 * Where the compiled story came from in Prosetta. Copied from the story asset when the
+	 * story begins; used as the prefix of this story's log messages when present.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	void SetProsettaProvenance( const FProsettaStoryProvenance &Provenance );
+
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	const FProsettaStoryProvenance& GetProsettaProvenance() const;
+
+	/**
+	 * GetLogContext
+	 * "story <id>" plus the Prosetta provenance when present, e.g.
+	 * "story 3 | Prosetta project 42 live core@17 gen 9f3c1a2b build 77aa01b2".
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	FString GetLogContext() const;
+
+	/** Receives InkPlusPlus exception-substitute messages and routes them to the story that is currently executing. */
+	static void OnRuntimeExceptionStatic( const FString &Message );
+
+	/**
 	 * EvaluateFunction
 	 * Evaluates a function defined in Ink script from Blueprint or C++. 
 	 *
@@ -977,10 +1131,35 @@ protected:
 
 	void BindOnVariableStateChangeEvent();
 
+	void BindOnStoryErrorEvent();
+	void OnStoryErrorInternal(FString Message, Ink::EErrorType ErrorType);
+	void ApplyStoryErrorPolicy( const FString &Message, EInkpotStoryErrorType ErrorType );
+
+	// Marks this story as the one executing Ink, so VM exceptions can be attributed to it.
+	struct FActiveStoryScope
+	{
+		explicit FActiveStoryScope( UInkpotStory* InStory );
+		~FActiveStoryScope();
+	private:
+		UInkpotStory* Previous;
+	};
+	void EnsureExternalBindingsValidated();
+	bool BindExternalFunctionInternal( const FString &InFunctionName, TSharedPtr<FStoryExternalFunction> InFunction, bool bInLookAheadSafe, bool bInOverrideExisting );
+
 protected:
 	TSharedPtr<FInkpotStoryInternal> StoryInternal;
 	
 	TMultiMap<FString, TSharedPtr<FStoryVariableObserver>> VariableObservers;
+
+	// Observers bound through SetOnAnyVariableChange, keyed by owner object.
+	TArray<TPair<TWeakObjectPtr<const UObject>, TSharedPtr<FStoryVariableObserver>>> AnyVariableObservers;
+
+	// Observers created through the native ( lambda ) API, keyed by handle id.
+	TMap<uint64, TSharedPtr<FStoryVariableObserver>> NativeVariableObservers;
+	uint64 NextNativeObserverId{ 1 };
+
+	FOnInkpotStoryErrorNative EventOnStoryErrorNative;
+	bool bExternalBindingsValidated{ false };
 
 	UPROPERTY(BlueprintAssignable, Category="Inkpot|Story", meta=(DisplayName="OnContinue") )
 	FOnStoryContinue EventOnContinue; 
@@ -1004,6 +1183,10 @@ protected:
 	UPROPERTY(BlueprintAssignable, Category = "Inkpot|Story", meta = (DisplayName = "OnFlowEnded"))
 	FOnFlowEnded EventOnFlowEnded;
 
+	// Fired for every runtime error or warning the Ink VM reports ( also logged ).
+	UPROPERTY(BlueprintAssignable, Category = "Inkpot|Story", meta = (DisplayName = "OnStoryError"))
+	FOnInkpotStoryError EventOnStoryError;
+
 #if WITH_EDITORONLY_DATA 
 	UPROPERTY(BlueprintAssignable, Category = "Inkpot|Story", meta = (DisplayName = "OnDebugRefresh"))
 	FOnStoryContinue EventOnDebugRefresh;
@@ -1023,6 +1206,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UProsettaMetadata> ProsettaMetadata;
+
+	UPROPERTY(Transient)
+	FProsettaStoryProvenance ProsettaProvenance;
 
 	// Flows that became exhausted (no content, no choices) while a line was still
 	// rendering. OnFlowEnded for these is deferred until the flow's last render ends.
@@ -1052,4 +1238,10 @@ bool UInkpotStory::GetVariable( const FString& InVariable, Ink::EValueType InTyp
 		INKPOT_ERROR("Could not get value of variable '%s'", *InVariable );
 
 	return success;
+}
+
+template<typename R, typename... Args>
+bool UInkpotStory::BindNativeFunction( const FString &FunctionName, R (*Function)(Args...), bool bLookaheadSafe, bool bOverrideExisting )
+{
+	return BindNativeFunction( FInkpotNativeFunction::Make( FunctionName, Function, bLookaheadSafe ), bOverrideExisting );
 }

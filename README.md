@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.40.23** of the plugin.</br>
+This is version **1.41.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -28,6 +28,14 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.41.23)
+Native Bound Functions: Prosetta C++ modules ( `namespace Prosetta::Bindings::<Module>` ) and local modules written the same way register with a process-wide native binding registry through generated `<Module>.Bindings.cpp` loaders, and bind to every story's `EXTERNAL`s automatically. See [Docs/NativeBindings.md](Docs/NativeBindings.md).<br>
+Editor commands `Prosetta.NativeBindings.Scan` / `Generate` validate module source with Prosetta's C++ rules, cross-check it against `native-bindings/manifest.json` ( functions, arity, lookahead flags, source SHA-256, exclusions ) and write loaders; `Prosetta.Watch.ImportNative ... generate` does the same for staged watch generations.<br>
+`Prosetta.NativeBindings.List` / `Audit` inspect the registry and audit it, and running stories, against the manifest in editor and game builds.<br>
+`UInkpotStory` gains EXTERNAL discovery and validation ( logged on the first Continue instead of a VM abort ), inkcpp-style direct C++ binding, fallback control, observe-all and native lambda variable observers, and an `OnStoryError` event for VM runtime errors and warnings.<br>
+Story error policy: `UInkpotSettings` chooses what happens to story errors and warnings after `OnStoryError` is broadcast ( broadcast only, log, ensure, or fatal ), and whether they also go to the editor Message Log ( **Inkpot** ) and the screen. InkPlusPlus exception-substitute messages are routed through the same policy and attributed to the executing story.<br>
+Story logs are prefixed with Prosetta provenance when present: project id, channel, volume / tag / revision, release tag, generation id and the compiled story's build hash. Provenance is recorded on `UInkpotStoryAsset` by the watch import and the compiled JSON importer, and can be loaded from a sync mirror manifest with `LoadSyncManifestProvenance`.<br>
 
 ### Prosetta-specific changes (1.40.23)
 These changes apply to Inkpot's Prosetta integration, not to Inkpot's core Ink runtime.<br>
@@ -253,6 +261,24 @@ for creating Ink. We've used this for much more than narrative.</br></br>
 for giving us a good basis for creating InkPlusPlus.</br></br>
 **Colin, Seb & Canute at TCR**</br>
 for the brilliant job in porting the Ink Engine Runtime to C++, along with the editor asset handling, unit tests and Unreal integration, most of the work here in fact.<br>
+
+## Native bound functions
+
+Prosetta ships each C++ Native Bound Functions module as `native-bindings/cpp/<Module>.cpp`
+beside `native-bindings/manifest.json`. Copy the modules into a project source folder
+( or run `Prosetta.Watch.ImportNative "<namespace>" "/abs/dest" generate` from an applied
+watch generation ), then validate and generate loaders:
+
+```text
+Prosetta.NativeBindings.Scan "/abs/Source/MyGame/Prosetta/NativeBindings" "/abs/Saved/Prosetta/native-bindings/manifest.json"
+Prosetta.NativeBindings.Generate "/abs/Source/MyGame/Prosetta/NativeBindings" "/abs/Saved/Prosetta/native-bindings/manifest.json"
+```
+
+Rebuild, and every story binds the registered functions to its `EXTERNAL`s when it
+begins. Local modules follow the same `namespace Prosetta::Bindings::<Module>` convention
+and get the same loaders. `Prosetta.NativeBindings.List` and `Prosetta.NativeBindings.Audit`
+show what is registered and whether it matches the manifest. Full details, conventions
+and the runtime API are in [Docs/NativeBindings.md](Docs/NativeBindings.md).
 
 ## Compiled Prosetta stories
 

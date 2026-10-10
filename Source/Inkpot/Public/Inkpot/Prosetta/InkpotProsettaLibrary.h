@@ -45,4 +45,22 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
 	static FString StripTags(const FString& InFragment);
+
+	/**
+	 * LoadSyncManifestProvenance
+	 * Reads story provenance ( project, scope, volume, generation, revision, build id ) from
+	 * a Prosetta sync mirror or generation manifest.json, e.g. <Project>/Saved/Prosetta/manifest.json.
+	 * Pass a volume slug to pick that volume's compiled story in a multi-volume manifest.
+	 * Set the result on a UInkpotStoryAsset built from the mirror so its stories log it.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
+	static bool LoadSyncManifestProvenance(const FString& ManifestFilename, const FString& VolumeSlug, FProsettaStoryProvenance& OutProvenance);
+
+	/** The default sync mirror manifest: <Project>/Saved/Prosetta/manifest.json. */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static FString GetDefaultSyncManifestPath();
+
+	/** Compact one-line form of a provenance record, as used in Inkpot's log prefixes. */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static FString ProvenanceToLogString(const FProsettaStoryProvenance& Provenance);
 };

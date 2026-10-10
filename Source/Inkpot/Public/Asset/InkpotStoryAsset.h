@@ -4,6 +4,7 @@
 #include "Engine/DataAsset.h"
 #include "Engine/AssetUserData.h"
 #include "Interfaces/Interface_AssetUserData.h"
+#include "Inkpot/Prosetta/ProsettaTypes.h"
 #include "InkpotStoryAsset.generated.h"
 
 class UInkpotStoryMetaData;
@@ -54,6 +55,20 @@ public:
 	UFUNCTION(BlueprintPure)
 	const FString& GetProsettaJSON() const;
 
+	/* SetProsettaProvenance
+	* Records where the compiled story came from in Prosetta ( project, channel, volume,
+	* generation, build hash ). Set by the Prosetta importers; game code that builds a
+	* story asset from a sync mirror can set it from the mirror's manifest.json.
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Inkpot|StoryAsset")
+	void SetProsettaProvenance( const FProsettaStoryProvenance &Provenance );
+
+	/* GetProsettaProvenance
+	* The Prosetta provenance recorded on the Asset; all fields empty when unknown.
+	*/
+	UFUNCTION(BlueprintPure, Category = "Inkpot|StoryAsset")
+	const FProsettaStoryProvenance& GetProsettaProvenance() const;
+
 #if WITH_EDITOR
 	virtual void PostInitProperties() override;
 	virtual void GetAssetRegistryTags( FAssetRegistryTagsContext Context ) const override;
@@ -79,6 +94,9 @@ private:
 
 	UPROPERTY( VisibleAnywhere, Category="Inkpot|StoryAsset" )
 	FString ProsettaJSON;
+
+	UPROPERTY( VisibleAnywhere, Category="Inkpot|StoryAsset" )
+	FProsettaStoryProvenance ProsettaProvenance;
 
 	UPROPERTY(VisibleAnywhere, Category = "Inkpot|StoryAsset")
 	TObjectPtr <UAssetUserData> UserData;
