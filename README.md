@@ -1,7 +1,7 @@
 # Inkpot for Prosetta
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
-This is a plugin for Unreal Engine 5.7 or later.<br>
+This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
 This is version **1.40.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
@@ -146,7 +146,7 @@ External functions are now implemented, along with functional tests.<br>
 Initial release.<br>
 
 ## Requirements 
-Inkpot works with version 5.7 of Unreal.<br>
+Inkpot requires Unreal Engine 5.7.4 (the latest 5.7 patch) or later. This is enforced in each module's `.Build.cs`, which fails the build on older engines.<br>
 Inkpot includes a C++ port of Ink-engine-runtime version 21, which can be found in the InkPlusPlus module.<br>
 
 ### .Net framework 5.0
