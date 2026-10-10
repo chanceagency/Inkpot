@@ -12,6 +12,7 @@
 #include "Editor.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Factories/SoundFactory.h"
+#include "AssetDeleteModel.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
 #include "UObject/StrongObjectPtr.h"
@@ -177,6 +178,7 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
 bool UProsettaWatchSubsystem::TryApplyPending()
 {
  if (Pending.IsEmpty() || !IsSafeToApply()) return false;
+ TStrongObjectPtr<UProsettaWatchSubsystem> keepAlive(this);
  TArray<FString> names;
  Pending.GetKeys(names);
  for (const FString& name : names)
@@ -185,7 +187,8 @@ bool UProsettaWatchSubsystem::TryApplyPending()
   const FString event = Pending.FindChecked(name);
   if (!ApplyGeneration(event, error)) { Status = TEXT("Import failed; previous generation retained: ") + error; Pending.Remove(name); return false; }
   Pending.Remove(name);
-  Status = TEXT("Applied generation: ") + name;
+  CleanupRetiredAssets(name);
+  Status = TEXT("Applied generation: ") + name + TEXT(". ") + Status;
  }
  return true;
 }
@@ -453,6 +456,66 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  // in an editor-only retirement map, preserving user references until explicit cleanup.
  NativeGenerationPaths.Add(name, root);
  return true;
+}
+
+int32 UProsettaWatchSubsystem::CleanupRetiredAssets(const FString& Namespace)
+{
+ if (!IsSafeToApply()) { Status = TEXT("Owned cleanup waits for Play stop/editor idle."); return 0; }
+ TStrongObjectPtr<UProsettaWatchSubsystem> keepAlive(this);
+ const FString base = TEXT("/Game/Prosetta/") + Namespace;
+ const FString path = base / TEXT("Generation.Generation");
+ TStrongObjectPtr<UProsettaGenerationAsset> state(LoadObject<UProsettaGenerationAsset>(nullptr, *path, nullptr, LOAD_NoWarn));
+ if (!state.IsValid() || state->Namespace != Namespace) { Status = TEXT("Owned cleanup requires a matching generation registry."); return 0; }
+ TArray<FString> keys;
+ state->RetiredAssets.GetKeys(keys);
+ int32 deleted = 0, retained = 0;
+ for (const FString& key : keys)
+ {
+  UObject* asset = state->RetiredAssets.FindRef(key);
+  const FString package = base / (TEXT("Artifact_") + Hash(key));
+  if (!asset || state->Assets.Contains(key) || asset->GetOutermost()->GetName() != package)
+  { ++retained; continue; }
+  if (const UProsettaSyncedArtifact* supporting = Cast<UProsettaSyncedArtifact>(asset))
+  {
+   if (supporting->Namespace != Namespace || supporting->Key != key) { ++retained; continue; }
+  }
+  else if (!asset->IsA<UInkpotStoryAsset>()) { ++retained; continue; }
+
+  // Detach only our own reference and persist it before the engine's disk+memory scan.
+  // Never root the target: a strong reference here would make every scan retain it.
+  const TWeakObjectPtr<UObject> target(asset);
+  state->RetiredAssets.Remove(key);
+  state->MarkPackageDirty();
+  if (!SaveAsset(state.Get()))
+  {
+   state->RetiredAssets.Add(key, asset);
+   Status = TEXT("Owned cleanup retained assets because the registry could not be saved.");
+   return deleted;
+  }
+  const FString registryFile = FPackageName::LongPackageNameToFilename(state->GetOutermost()->GetName(), FPackageName::GetAssetPackageExtension());
+  FAssetRegistryModule::GetRegistry().ScanModifiedAssetFiles({registryFile});
+  FAssetDeleteModel model({asset});
+  for (int32 step = 0; model.GetState() != FAssetDeleteModel::Finished && step < 1024; ++step) model.Tick(0.01f);
+  const bool safe = model.GetState() == FAssetDeleteModel::Finished && model.CanDelete() && !model.IsAnythingReferencedInMemoryByUndo();
+  // DoDelete performs Unreal's checked deletion. Never force-delete, replace references,
+  // or delete source content. Referenced assets remain available for user content/undo.
+  const bool removed = safe && model.DoDelete() && model.GetDeletedObjectCount() == 1;
+  const FString assetFile = FPackageName::LongPackageNameToFilename(package, FPackageName::GetAssetPackageExtension());
+  if (removed && !FPaths::FileExists(assetFile)) ++deleted;
+  else
+  {
+   if (target.IsValid()) state->RetiredAssets.Add(key, target.Get());
+   ++retained;
+  }
+  state->MarkPackageDirty();
+  if (!SaveAsset(state.Get()))
+  {
+   Status = TEXT("Owned cleanup could not save its final registry; completed generation remains available for repair.");
+   return deleted;
+  }
+ }
+ Status = FString::Printf(TEXT("Owned cleanup deleted %d unused assets; retained %d referenced/unconfirmed assets."), deleted, retained);
+ return deleted;
 }
 
 bool UProsettaWatchSubsystem::ImportNativeSources(const FString& Namespace, const FString& Destination)

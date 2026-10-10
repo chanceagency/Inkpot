@@ -19,6 +19,7 @@ public:
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") void StopWatch();
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool ConsumeEvent(const FString& EventJSON);
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool TryApplyPending();
+ UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") int32 CleanupRetiredAssets(const FString& Namespace);
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool ImportNativeSources(const FString& Namespace, const FString& Destination);
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") FString GetStatus() const { return Status; }
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") int32 GetPendingCount() const { return Pending.Num(); }

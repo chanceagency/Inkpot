@@ -312,13 +312,18 @@ is verified but not decoded/reimported. Localization/source data and audio remai
 owned by the selected generation. Other binary formats stay in the immutable CLI
 cache for game-specific adapters.
 
-A removed key leaves the active Generation map. Its existing identity enters an
-editor-only retirement map so references in your maps, Blueprints, and audio
-previews remain valid; reappearing keys restore that same identity. The retirement
-map is omitted from cooking, while an explicit external reference can still cook
-an old asset. Physical removal of retired packages is deliberately deferred to a
-checked cleanup pass; the watcher never force-deletes objects. User-created
-packages at a generated path cause an import error instead of an overwrite.
+A removed key leaves the active Generation map. The watcher persists and rescans
+its ownership registry, then uses Unreal's checked deletion model to remove unused
+owned assets and their packages. External memory/disk references, undo references,
+unconfirmed scans, or failed deletion preserve the identity in an editor-only
+retirement map; reappearing referenced keys restore that same identity. The
+retirement map is omitted from cooking, while an explicit external game reference
+can still cook an old asset. The watcher never force-deletes objects or source
+files. After removing user references, run `Prosetta.Watch.Cleanup "namespace"` to
+recheck retirement; each accepted generation also performs this checked pass.
+Cleanup failures report pending repair after generation acceptance; they do not
+roll back the accepted generation. User-created packages at a generated path cause an import error instead of an
+overwrite.
 
 Live and latest-release watches have separate scope namespaces. A blocked or
 missing release retains the last imported assets. Native sources are staged in
@@ -339,8 +344,10 @@ CLI watch and credentials exist exclusively in the editor module.
 
 The local verification workflow exercises compiled import, source import control,
 Play/stop deferral, out-of-order supersession, stable identities, changed localization
-and WAV import, corrupt-generation preservation, retirement/resurrection, frozen
+and WAV import, corrupt-generation preservation, checked owned package removal,
+referenced retirement/resurrection, unrelated user-package preservation, frozen
 isolation, native staging/explicit import, and a real process/ticker sidecar fixture.
-It then launches a fresh editor process to reload saved localization and audio.
+It then launches a fresh editor process to reload saved localization/audio and
+verify unreferenced packages remain absent and saved user references remain intact.
 This is editor fixture evidence; a human project pilot, Windows validation, and a
 cooked game/audio acceptance run are still required before milestone acceptance.

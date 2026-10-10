@@ -10,7 +10,10 @@
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "Serialization/JsonSerializer.h"
-#include "ObjectTools.h"
+#include "UObject/SavePackage.h"
+#include "UObject/StrongObjectPtr.h"
+#include "Misc/PackageName.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 
 namespace
 {
@@ -28,6 +31,27 @@ namespace
   FString result;
   FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&result));
   return result;
+ }
+ FString PackageFile(UObject* Asset)
+ {
+  return FPackageName::LongPackageNameToFilename(Asset->GetOutermost()->GetName(), FPackageName::GetAssetPackageExtension());
+ }
+ bool SaveUserFixture(UObject* Asset)
+ {
+  FAssetRegistryModule::AssetCreated(Asset);
+  FSavePackageArgs args;
+  args.TopLevelFlags = RF_Public | RF_Standalone;
+  if (!UPackage::SavePackage(Asset->GetOutermost(), Asset, *PackageFile(Asset), args)) return false;
+  FAssetRegistryModule::GetRegistry().ScanModifiedAssetFiles({PackageFile(Asset)});
+  return true;
+ }
+ UProsettaGenerationAsset* UserFixture(const FString& Name, UObject* Reference = nullptr)
+ {
+  UPackage* package = CreatePackage(*(TEXT("/Game/ProsettaUserFixtures/") + Name));
+  UProsettaGenerationAsset* user = NewObject<UProsettaGenerationAsset>(package, *Name, RF_Public | RF_Standalone);
+  user->Namespace = TEXT("UserContent");
+  if (Reference) user->Assets.Add(TEXT("UserReference"), Reference);
+  return user;
  }
  struct FFixture
  {
@@ -168,6 +192,8 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  TestTrue(TEXT("frozen applies separately"), watch->TryApplyPending());
  UProsettaGenerationAsset* release = State(frozen);
  TestTrue(TEXT("frozen identity separate"), release && release != state && release->Assets.FindRef(TEXT("compiled-story")).Get() != story);
+ TStrongObjectPtr<UProsettaGenerationAsset> userReference(UserFixture(TEXT("Reference_") + SHAString(scope), audio));
+ TestTrue(TEXT("external user audio reference saved"), SaveUserFixture(userReference.Get()));
  const FFixture removal = Generation(scope, TEXT("5"), TEXT("live"), false);
  watch->ConsumeEvent(removal.Event);
  TestTrue(TEXT("owned audio removal applies"), watch->TryApplyPending());
@@ -184,6 +210,66 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  // Keep ignored fixture packages for the cold-load persistence verification.
  FFileHelper::SaveStringToFile(TEXT("/Game/Prosetta/") + frozen.Namespace + TEXT("/Generation.Generation"), *(FPaths::ProjectSavedDir() / TEXT("WatchPersistence.txt")));
  IFileManager::Get().DeleteDirectory(*nativeDestination, false, true);
+ return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchOwnedRemovalTest, "Inkpot.Prosetta.WatchOwnedRemoval",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
+{
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
+ const FString scope = TEXT("removal-") + FGuid::NewGuid().ToString();
+ const FFixture unused = Generation(scope, TEXT("1"), TEXT("live"));
+ watch->ConsumeEvent(unused.Event);
+ if (!TestTrue(TEXT("unreferenced fixture imports"), watch->TryApplyPending())) return false;
+ TStrongObjectPtr<UProsettaGenerationAsset> unusedState(State(unused));
+ UObject* unusedAudio = unusedState->Assets.FindRef(TEXT("audio-file:take1"));
+ if (!TestNotNull(TEXT("unreferenced audio exists before removal"), unusedAudio)) return false;
+ const FString removedPackage = PackageFile(unusedAudio);
+ const TWeakObjectPtr<UObject> deletedAudio(unusedAudio);
+ unusedAudio = nullptr; // Do not keep a GC-visible reference to a candidate expected to delete.
+ TStrongObjectPtr<UProsettaGenerationAsset> unrelated(UserFixture(TEXT("Unrelated_") + SHAString(scope)));
+ TestTrue(TEXT("unrelated user package saved"), SaveUserFixture(unrelated.Get()));
+ const FString unrelatedPackage = PackageFile(unrelated.Get());
+ const FFixture removal = Generation(scope, TEXT("2"), TEXT("live"), false);
+ watch->ConsumeEvent(removal.Event);
+ TestTrue(TEXT("obsolete unreferenced generation applies"), watch->TryApplyPending());
+ TestFalse(TEXT("unreferenced owned package physically removed"), FPaths::FileExists(removedPackage));
+ TestFalse(TEXT("unreferenced obsolete identity destroyed"), deletedAudio.IsValid());
+ TestFalse(TEXT("deleted key not retained"), unusedState->RetiredAssets.Contains(TEXT("audio-file:take1")));
+ TestTrue(TEXT("unrelated user package preserved"), FPaths::FileExists(unrelatedPackage));
+ TestTrue(TEXT("unrelated user object preserved"), unrelated.IsValid());
+ AddInfo(watch->GetStatus());
+
+ const FFixture referenced = Generation(scope + TEXT("-referenced"), TEXT("1"), TEXT("live"));
+ watch->ConsumeEvent(referenced.Event);
+ if (!TestTrue(TEXT("referenced fixture imports"), watch->TryApplyPending())) return false;
+ TStrongObjectPtr<UProsettaGenerationAsset> referencedState(State(referenced));
+ UObject* referencedAudio = referencedState->Assets.FindRef(TEXT("audio-file:take1"));
+ if (!TestNotNull(TEXT("referenced audio exists before removal"), referencedAudio)) return false;
+ const FString retainedPackage = PackageFile(referencedAudio);
+ TStrongObjectPtr<UProsettaGenerationAsset> user(UserFixture(TEXT("External_") + SHAString(scope), referencedAudio));
+ TestTrue(TEXT("external user reference saved"), SaveUserFixture(user.Get()));
+ const TWeakObjectPtr<UObject> retainedTarget(referencedAudio);
+ user->Assets.Empty(); // Keep the saved disk edge but remove the memory edge for this scan.
+ const FFixture referencedRemoval = Generation(scope + TEXT("-referenced"), TEXT("2"), TEXT("live"), false);
+ watch->ConsumeEvent(referencedRemoval.Event);
+ TestTrue(TEXT("referenced obsolete generation applies"), watch->TryApplyPending());
+ TestFalse(TEXT("referenced obsolete key leaves active registry"), referencedState->Assets.Contains(TEXT("audio-file:take1")));
+ TestEqual(TEXT("external referenced identity retired"), referencedState->RetiredAssets.FindRef(TEXT("audio-file:take1")).Get(), referencedAudio);
+ TestTrue(TEXT("external referenced package preserved"), FPaths::FileExists(retainedPackage));
+ TestTrue(TEXT("disk-only external reference prevents deletion"), retainedTarget.IsValid());
+ if (retainedTarget.IsValid()) user->Assets.Add(TEXT("UserReference"), retainedTarget.Get());
+ TestEqual(TEXT("saved user identity preserved"), user->Assets.FindRef(TEXT("UserReference")).Get(), referencedAudio);
+ TestEqual(TEXT("rechecking referenced asset preserves it"), watch->CleanupRetiredAssets(referenced.Namespace), 0);
+ AddInfo(watch->GetStatus());
+ auto persistence = MakeShared<FJsonObject>();
+ persistence->SetStringField(TEXT("removedPackage"), removedPackage);
+ persistence->SetStringField(TEXT("retainedPackage"), retainedPackage);
+ persistence->SetStringField(TEXT("unrelatedPackage"), unrelatedPackage);
+ persistence->SetStringField(TEXT("userPath"), user->GetPathName());
+ persistence->SetStringField(TEXT("registryPath"), referencedState->GetPathName());
+ FFileHelper::SaveStringToFile(Json(persistence), *(FPaths::ProjectSavedDir() / TEXT("WatchRemovalPersistence.json")));
  return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchPersistenceTest, "Inkpot.Prosetta.WatchPersistence",
@@ -206,6 +292,22 @@ bool FProsettaWatchPersistenceTest::RunTest(const FString& InParameters)
   TestTrue(TEXT("saved localization resolves"), localization->ResolveLocalizedText(FName(TEXT("023A")), TEXT("fr"), localized));
   TestEqual(TEXT("saved localized string"), localized, FString(TEXT("Bonjour 3")));
  }
+ FString removalJSON;
+ TSharedPtr<FJsonObject> removal;
+ if (!TestTrue(TEXT("removal persistence record exists"), FFileHelper::LoadFileToString(removalJSON, *(FPaths::ProjectSavedDir() / TEXT("WatchRemovalPersistence.json"))))) return false;
+ if (!TestTrue(TEXT("removal persistence record parses"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(removalJSON), removal))) return false;
+ TestFalse(TEXT("deleted owned package absent after restart"), FPaths::FileExists(removal->GetStringField(TEXT("removedPackage"))));
+ TestTrue(TEXT("referenced owned package retained after restart"), FPaths::FileExists(removal->GetStringField(TEXT("retainedPackage"))));
+ TestTrue(TEXT("unrelated package retained after restart"), FPaths::FileExists(removal->GetStringField(TEXT("unrelatedPackage"))));
+ UProsettaGenerationAsset* user = LoadObject<UProsettaGenerationAsset>(nullptr, *removal->GetStringField(TEXT("userPath")));
+ UProsettaGenerationAsset* retiredRegistry = LoadObject<UProsettaGenerationAsset>(nullptr, *removal->GetStringField(TEXT("registryPath")));
+ if (TestNotNull(TEXT("saved external user reference loads"), user) && TestNotNull(TEXT("saved retirement registry loads"), retiredRegistry))
+ {
+  UObject* retired = retiredRegistry->RetiredAssets.FindRef(TEXT("audio-file:take1"));
+  TestNotNull(TEXT("saved referenced retired asset loads"), retired);
+  TestEqual(TEXT("saved user reference matches retained identity"), user->Assets.FindRef(TEXT("UserReference")).Get(), retired);
+ }
+
  return true;
 }
 #if PLATFORM_MAC || PLATFORM_LINUX

@@ -26,6 +26,16 @@ namespace
   {
    if (auto* watch = Watch()) UE_LOG(LogTemp, Display, TEXT("Prosetta: %s; pending namespaces=%d"), *watch->GetStatus(), watch->GetPendingCount());
   }));
+ FAutoConsoleCommand Cleanup(TEXT("Prosetta.Watch.Cleanup"), TEXT("Recheck retired owned assets: Prosetta.Watch.Cleanup \"namespace\"; referenced assets are preserved."),
+  FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+  {
+   if (auto* watch = Watch())
+   {
+    if (Args.Num() != 1) { UE_LOG(LogTemp, Warning, TEXT("Expected applied namespace.")); return; }
+    watch->CleanupRetiredAssets(Args[0]);
+    UE_LOG(LogTemp, Display, TEXT("Prosetta: %s"), *watch->GetStatus());
+   }
+  }));
  FAutoConsoleCommand Native(TEXT("Prosetta.Watch.ImportNative"), TEXT("Explicit C++ source import: Prosetta.Watch.ImportNative \"namespace\" \"absolute destination\"; review and rebuild afterward."),
   FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
   {
