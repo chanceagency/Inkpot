@@ -167,7 +167,10 @@ warning ).
 | `bAutoBindNativeFunctions` | on | `BeginStory` ( and hot reload ) binds every registered function the story calls. Existing Blueprint / C++ bindings are never replaced. |
 | `bValidateExternalBindingsOnFirstContinue` | on | The first `Continue` logs an error for each `EXTERNAL` the story calls that is still unbound. The VM aborts when it reaches one, so this turns a crash into a readable error. |
 | `bAllowExternalFunctionFallbacks` | off | An unbound `EXTERNAL` diverts to an Ink function of the same name when one exists ( Ink's `allowExternalFunctionFallbacks` ). |
-| `bLogStoryErrors` | on | Runtime errors and warnings reported by the VM are logged under the `Inkpot` category as well as broadcast. |
+| `StoryErrorAction` / `StoryWarningAction` | Log / Log | What happens to a story error or warning after `OnStoryError` is broadcast: `BroadcastOnly`, `Log` ( Output Log, `Inkpot` category ), `Ensure` ( log, then trip an ensure so a debugger breaks ), or `Fatal` ( log, then fail fatally: the equivalent of an uncaught ink exception ). |
+| `bStoryErrorsToMessageLog` | on | Mirror story errors and warnings to the editor Message Log under **Inkpot**, where they persist after Play. |
+| `bStoryErrorsOnScreen` / `StoryErrorOnScreenSeconds` | off / 8 | Also show them as on-screen debug messages. |
+| `bIncludeProsettaProvenanceInLogs` | on | Prefix story logs with the story's Prosetta provenance when the asset carries it. |
 
 `UInkpotStory` API ( Blueprint and C++ unless noted ):
 
@@ -183,9 +186,28 @@ warning ).
   every global variable; `GetGlobalVariableNames()`.
 - `ObserveVariableNative(Variable, Lambda)`, `ObserveAllVariablesNative(Lambda)`,
   `RemoveVariableObserver(Handle)` – C++ observers owned by the story.
-- `OnStoryError` ( Blueprint event ) and `OnStoryError()` ( C++ multicast ) – runtime
-  errors and warnings the VM reports after a `Continue`. Errors the port raises
-  through its exception substitute are still logged by InkPlusPlus.
+- `OnStoryError` ( Blueprint event ) and `OnStoryError()` ( C++ multicast ) – every
+  story error and warning: VM errors reported after a `Continue`, InkPlusPlus
+  exception-substitute messages ( attributed to the story that was executing ),
+  unbound `EXTERNAL`s and native binding mismatches. `ReportStoryError(Message, Type)`
+  lets game code push its own problems through the same policy.
+- `GetLogContext()` – `story <id> | <provenance>`; `SetProsettaProvenance` / `GetProsettaProvenance`.
+
+### Story provenance in logs
+
+Every story log line is prefixed with `[Inkpot story <id> | Prosetta project <id> <channel>
+<volume>#<tag>@<revision> release <tagId> gen <generation> build <sha>]`, with only the
+parts that are known. `FProsettaStoryProvenance` is stored on the `UInkpotStoryAsset` and
+copied to the story when it begins:
+
+| Source | What is recorded |
+| :-- | :-- |
+| Prosetta watch import | project id, channel, scope, volume slug / tag, generation id, revision, release tag and publish time, watch namespace, build id ( the artifact checksum ) |
+| Compiled `.ink.json` import | project name and compile time from the Prosetta wrapper, build id ( sha256 of the compiled bytes ) |
+| Game code | `UInkpotProsettaLibrary::LoadSyncManifestProvenance(<Saved/Prosetta/manifest.json>, VolumeSlug)` then `UInkpotStoryAsset::SetProsettaProvenance` for assets built from a sync mirror |
+
+The build id matches the compiled story artifact checksum in the sync manifest and the
+volume index's `buildId`, so a logged error can be tied to an exact Prosetta build.
 
 `UInkpotNativeBindingLibrary` ( Blueprint function library ):
 

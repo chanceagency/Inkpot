@@ -17,6 +17,7 @@ public:
 private:
 	void InitAssetCategory();
 	void InitMenuOptions();
+	void InitMessageLog();
 
 	UFUNCTION()
 	void AddMenu( FMenuBarBuilder& MenuBuilder );

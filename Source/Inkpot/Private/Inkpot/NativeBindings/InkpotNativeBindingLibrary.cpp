@@ -262,7 +262,7 @@ namespace
 				for (UInkpotStory* story : inkpot->GetStories())
 				{
 					if (!IsValid(story) || !story->IsValid()) continue;
-					UE_LOG(Inkpot, Display, TEXT("Story %d: %s"), story->GetID(), *UInkpotNativeBindingLibrary::AuditStory(story, manifest, false).ToString());
+					UE_LOG(Inkpot, Display, TEXT("[Inkpot %s] %s"), *story->GetLogContext(), *UInkpotNativeBindingLibrary::AuditStory(story, manifest, false).ToString());
 				}
 			}
 		}));

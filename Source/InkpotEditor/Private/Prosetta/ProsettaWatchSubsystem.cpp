@@ -404,6 +404,12 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
   {
    story->SetCompiledJSON(candidate.Text);
    story->SetProsettaJSON(metadata);
+   // Provenance: project / channel / volume / generation from the event and manifest, build id from the artifact checksum.
+   FProsettaStoryProvenance provenanceInfo;
+   FProsettaStoryProvenance::FromSyncManifest(manifest, event, candidate.Key.StartsWith(TEXT("compiled-story:")) ? candidate.Key.RightChop(15) : FString(), provenanceInfo);
+   provenanceInfo.Namespace = name;
+   provenanceInfo.BuildId = candidate.Checksum.ToLower();
+   story->SetProsettaProvenance(provenanceInfo);
    story->UpdateAssetInfo(candidate.Path);
   }
   else if (UProsettaSyncedArtifact* supporting = Cast<UProsettaSyncedArtifact>(asset))

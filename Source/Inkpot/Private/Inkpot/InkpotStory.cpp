@@ -16,6 +16,8 @@
 #include "Ink/Container.h"
 #include "Ink/Divert.h"
 #include "GameplayTagsManager.h"
+#include "Logging/MessageLog.h"
+#include "Engine/Engine.h"
 
 void UInkpotStory::Initialise( TSharedPtr<FInkpotStoryInternal>  InInkpotStory )
 {
@@ -117,6 +119,7 @@ void UInkpotStory::ChoosePathGT(FGameplayTag InPath )
 
 void UInkpotStory::ChoosePathInternal( const FString &InPath )
 {
+	FActiveStoryScope scope(this);
 	StoryInternal->ChoosePathString( InPath, true, TArray<TSharedPtr<Ink::FValueType>>() );
 }
 
@@ -223,6 +226,7 @@ FString UInkpotStory::ContinueInternal()
 		return GetCurrentText();
 	}
 	EnsureExternalBindingsValidated();
+	FActiveStoryScope scope(this);
 	return StoryInternal->Continue();
 }
 
@@ -239,6 +243,7 @@ FString UInkpotStory::ContinueMaximallyInternal()
 		return GetCurrentText();
 	}
 	EnsureExternalBindingsValidated();
+	FActiveStoryScope scope(this);
 	return StoryInternal->ContinueMaximally();
 }
 
@@ -303,6 +308,7 @@ void UInkpotStory::ChooseChoice( UInkpotChoice* InChoice )
 
 void UInkpotStory::ChooseChoiceIndex( int32 InChoiceIndex )
 {
+	FActiveStoryScope scope(this);
 	StoryInternal->ChooseChoiceIndex( InChoiceIndex );
 }
 
@@ -586,6 +592,7 @@ void UInkpotStory::SetOnVariableChange( FOnInkpotVariableChange InDelegate, cons
 	);
 	
 	VariableObservers.AddUnique( InVariable, observer );
+	FActiveStoryScope scope(this);
 	StoryInternal->ObserveVariable( InVariable, observer );
 }
 
@@ -1050,6 +1057,7 @@ void UInkpotStory::EvaluateFunction(const FString& FunctionName, const TArray<FI
 	TArray<TSharedPtr<Ink::FValueType>> values;
 	if (!CreateInkValues(InValues, values))
 		return;
+	FActiveStoryScope scope(this);
 	TSharedPtr<Ink::FValueType> returnValue = StoryInternal->EvaluateFunction(FunctionName, CapturedText, values);
 	OutReturnValue = returnValue;
 }
@@ -1216,22 +1224,99 @@ void UInkpotStory::OnStoryErrorInternal(FString InMessage, Ink::EErrorType InErr
 	case Ink::EErrorType::Warning: type = EInkpotStoryErrorType::Warning; break;
 	default: break;
 	}
+	ReportStoryError( InMessage, type );
+}
 
-	if (GetDefault<UInkpotSettings>()->bLogStoryErrors)
+namespace
+{
+	// The story whose Ink VM is executing on this thread, for attributing VM exceptions.
+	thread_local UInkpotStory* GActiveInkpotStory = nullptr;
+}
+
+UInkpotStory::FActiveStoryScope::FActiveStoryScope( UInkpotStory* InStory )
+: Previous( GActiveInkpotStory )
+{
+	GActiveInkpotStory = InStory;
+}
+
+UInkpotStory::FActiveStoryScope::~FActiveStoryScope()
+{
+	GActiveInkpotStory = Previous;
+}
+
+void UInkpotStory::OnRuntimeExceptionStatic( const FString &InMessage )
+{
+	if (UInkpotStory* story = GActiveInkpotStory)
 	{
-		if (type == EInkpotStoryErrorType::Error)
-		{
-			INKPOT_ERROR("Ink story %d: %s", GetID(), *InMessage);
-		}
-		else
-		{
-			INKPOT_WARN("Ink story %d: %s", GetID(), *InMessage);
-		}
+		story->ReportStoryError( TEXT("Ink runtime exception: ") + InMessage, EInkpotStoryErrorType::Error );
+		return;
+	}
+	// No story is executing ( construction, tests driving Ink::FStory directly ): keep the old behaviour.
+	INKPOT_ERROR("Ink runtime exception: %s", *InMessage);
+}
+
+void UInkpotStory::SetProsettaProvenance( const FProsettaStoryProvenance &InProvenance )
+{
+	ProsettaProvenance = InProvenance;
+}
+
+const FProsettaStoryProvenance& UInkpotStory::GetProsettaProvenance() const
+{
+	return ProsettaProvenance;
+}
+
+FString UInkpotStory::GetLogContext() const
+{
+	FString context = FString::Printf( TEXT("story %d"), GetID() );
+	if (ProsettaProvenance.IsSet() && GetDefault<UInkpotSettings>()->bIncludeProsettaProvenanceInLogs)
+		context += TEXT(" | ") + ProsettaProvenance.ToLogString();
+	return context;
+}
+
+void UInkpotStory::ReportStoryError( const FString &InMessage, EInkpotStoryErrorType InErrorType )
+{
+	EventOnStoryErrorNative.Broadcast( this, InMessage, InErrorType );
+	if (EventOnStoryError.IsBound())
+		EventOnStoryError.Broadcast( this, InMessage, InErrorType );
+	ApplyStoryErrorPolicy( InMessage, InErrorType );
+}
+
+void UInkpotStory::ApplyStoryErrorPolicy( const FString &InMessage, EInkpotStoryErrorType InErrorType )
+{
+	const UInkpotSettings* settings = GetDefault<UInkpotSettings>();
+	const bool bError = InErrorType == EInkpotStoryErrorType::Error;
+	const EInkpotStoryErrorAction action = bError ? settings->StoryErrorAction : settings->StoryWarningAction;
+	if (action == EInkpotStoryErrorAction::BroadcastOnly)
+		return;
+
+	const FString message = FString::Printf( TEXT("[Inkpot %s] %s"), *GetLogContext(), *InMessage );
+	if (bError)
+	{
+		INKPOT_ERROR("%s", *message);
+	}
+	else
+	{
+		INKPOT_WARN("%s", *message);
 	}
 
-	EventOnStoryErrorNative.Broadcast(this, InMessage, type);
-	if (EventOnStoryError.IsBound())
-		EventOnStoryError.Broadcast(this, InMessage, type);
+	if (settings->bStoryErrorsToMessageLog)
+	{
+		FMessageLog log( "Inkpot" );
+		TSharedRef<FTokenizedMessage> tokenized = bError ? log.Error() : log.Warning();
+		tokenized->AddToken( FTextToken::Create( FText::FromString( message ) ) );
+	}
+
+	if (settings->bStoryErrorsOnScreen && GEngine)
+		GEngine->AddOnScreenDebugMessage( INDEX_NONE, settings->StoryErrorOnScreenSeconds, bError ? FColor::Red : FColor::Yellow, message );
+
+	if (action == EInkpotStoryErrorAction::Ensure)
+	{
+		ensureAlwaysMsgf( false, TEXT("%s"), *message );
+	}
+	else if (action == EInkpotStoryErrorAction::Fatal)
+	{
+		UE_LOG( Inkpot, Fatal, TEXT("%s"), *message );
+	}
 }
 
 FOnInkpotStoryErrorNative& UInkpotStory::OnStoryError()
@@ -1324,8 +1409,8 @@ bool UInkpotStory::ValidateExternalBindings( TArray<FString> &OutUnbound, bool b
 		OutUnbound.Add( external.Name );
 		if (bLogErrors)
 		{
-			INKPOT_ERROR("Story %d calls EXTERNAL '%s' ( arity %d ) but nothing is bound to it%s. Bind it before Continue reaches it, or register a native binding module.",
-				GetID(), *external.Name, external.Arity, external.bHasFallback ? TEXT(" and Ink fallbacks are disabled") : TEXT(""));
+			ReportStoryError( FString::Printf( TEXT("Calls EXTERNAL '%s' ( arity %d ) but nothing is bound to it%s. Bind it before Continue reaches it, or register a native binding module."),
+				*external.Name, external.Arity, external.bHasFallback ? TEXT(" and Ink fallbacks are disabled") : TEXT("") ), EInkpotStoryErrorType::Error );
 		}
 	}
 	bExternalBindingsValidated = true;
@@ -1370,7 +1455,7 @@ bool UInkpotStory::BindNativeFunction( const FInkpotNativeFunction &InFunction, 
 
 	if (!BindExternalFunctionInternal( InFunction.Descriptor.Name, function, InFunction.Descriptor.bLookaheadSafe, bInOverrideExisting ))
 	{
-		INKPOT_WARN("Native function '%s' ( module %s ) not bound: '%s' is already bound.", *InFunction.Descriptor.Name, *InFunction.Descriptor.ModuleName, *InFunction.Descriptor.Name);
+		INKPOT_WARN("[Inkpot %s] Native function '%s' ( module %s ) not bound: '%s' is already bound.", *GetLogContext(), *InFunction.Descriptor.Name, *InFunction.Descriptor.ModuleName, *InFunction.Descriptor.Name);
 		return false;
 	}
 	return true;
@@ -1419,7 +1504,7 @@ FInkpotNativeBindingReport UInkpotStory::BindRegisteredNativeFunctions( const TA
 		{
 			report.ArityMismatch.Add( external.Name );
 			report.Messages.Add( FString::Printf( TEXT("'%s' in module %s takes %d parameter(s) but the story calls it with %d; not bound."), *external.Name, *module->Name, function->Descriptor.Arity, external.Arity ) );
-			INKPOT_ERROR("Native function '%s' ( module %s ) takes %d parameter(s) but the story calls it with %d; not bound.", *external.Name, *module->Name, function->Descriptor.Arity, external.Arity);
+			ReportStoryError( FString::Printf( TEXT("Native function '%s' ( module %s ) takes %d parameter(s) but the story calls it with %d; not bound."), *external.Name, *module->Name, function->Descriptor.Arity, external.Arity ), EInkpotStoryErrorType::Error );
 			if (!StoryInternal->IsExternalFunctionBound( external.Name ))
 				report.Unbound.Add( external.Name );
 			continue;
@@ -1436,7 +1521,7 @@ FInkpotNativeBindingReport UInkpotStory::BindRegisteredNativeFunctions( const TA
 	}
 
 	report.bComplete = report.Unbound.Num() == 0 && report.ArityMismatch.Num() == 0;
-	INKPOT_LOG("Story %d native bindings: %d bound, %d already bound, %d unbound, %d arity mismatch.", GetID(), report.Bound.Num(), report.AlreadyBound.Num(), report.Unbound.Num(), report.ArityMismatch.Num());
+	INKPOT_LOG("[Inkpot %s] native bindings: %d bound, %d already bound, %d unbound, %d arity mismatch.", *GetLogContext(), report.Bound.Num(), report.AlreadyBound.Num(), report.Unbound.Num(), report.ArityMismatch.Num());
 	return report;
 }
 
@@ -1481,6 +1566,7 @@ void UInkpotStory::SetOnAnyVariableChange( FOnInkpotVariableChange InDelegate )
 		}
 	);
 	AnyVariableObservers.Emplace( TWeakObjectPtr<const UObject>( InDelegate.GetUObject() ), observer );
+	FActiveStoryScope scope(this);
 	StoryInternal->ObserveAllVariables( observer );
 }
 
@@ -1517,6 +1603,7 @@ FInkpotVariableObserverHandle UInkpotStory::ObserveVariableNative( const FString
 	);
 	handle.Id = NextNativeObserverId++;
 	NativeVariableObservers.Add( handle.Id, observer );
+	FActiveStoryScope scope(this);
 	StoryInternal->ObserveVariable( InVariable, observer );
 	return handle;
 }
@@ -1537,6 +1624,7 @@ FInkpotVariableObserverHandle UInkpotStory::ObserveAllVariablesNative( FInkpotVa
 	);
 	handle.Id = NextNativeObserverId++;
 	NativeVariableObservers.Add( handle.Id, observer );
+	FActiveStoryScope scope(this);
 	StoryInternal->ObserveAllVariables( observer );
 	return handle;
 }

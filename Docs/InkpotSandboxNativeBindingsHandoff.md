@@ -34,10 +34,13 @@ Prosetta.NativeBindings.Generate "/abs/InkpotSandbox/Source/InkpotSandbox/Proset
 ### 5. Local module path
 Add `Source/InkpotSandbox/Prosetta/NativeBindings/SandboxLocal.cpp` with `namespace Prosetta::Bindings::SandboxLocal { bool god_mode(bool enabled) { return enabled; } }`, declare `EXTERNAL god_mode(enabled)` in a local Ink file, run `Generate` again, rebuild, confirm it binds alongside the Prosetta module and that `Audit` reports it only as a local module (warning, not error).
 
-### 6. Observers and errors
+### 6. Provenance in logs
+`UProsettaStoryWidget::ResolveStoryAsset` builds a transient `UInkpotStoryAsset` from `Saved/Prosetta`. After `SetCompiledJSON`, call `UInkpotProsettaLibrary::LoadSyncManifestProvenance(UInkpotProsettaLibrary::GetDefaultSyncManifestPath(), VolumeSlug, Provenance)` and `Asset->SetProsettaProvenance(Provenance)`. Then every Inkpot story log line reads `[Inkpot story N | Prosetta project 42 live core@17 gen … build …]`; confirm the build hash matches the `compiled-story` checksum in `Saved/Prosetta/manifest.json`. Try Project Settings → Plugins → Inkpot → Diagnostics: set **Story Error Action** to `Ensure` and break a binding to see the debugger stop, and check the **Inkpot** page of Window → Developer Tools → Message Log after Play.
+
+### 7. Observers and errors
 From `UProsettaStoryWidget` (C++) call `Story->ObserveAllVariablesNative(...)` and log changes while playing; bind `OnStoryError` in `WBP_ProsettaStory` and trigger a runtime warning to see it arrive.
 
-### 7. Editor watch path (optional)
+### 8. Editor watch path (optional)
 If the watch sidecar is configured: `Prosetta.Watch.Start …`, accept a generation, then `Prosetta.Watch.ImportNative "<namespace from Prosetta.Watch.Status>" "/abs/Source/InkpotSandbox/Prosetta/NativeBindings" generate` — it copies the staged sources, validates them against the generation's manifest and writes the loaders in one step.
 
 Report back: build fixes needed, test results, and whether the `Saved/Prosetta → Source/…` copy step should become part of the sandbox sync wrapper.

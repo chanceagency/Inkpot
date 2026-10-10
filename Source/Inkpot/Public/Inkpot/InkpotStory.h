@@ -8,6 +8,7 @@
 #include "Inkpot/InkpotList.h"
 #include "Inkpot/NativeBindings/InkpotNativeBindingTypes.h"
 #include "Inkpot/NativeBindings/InkpotNativeBindingRegistry.h"
+#include "Inkpot/Prosetta/ProsettaTypes.h"
 #include "Utility/InkpotLog.h"
 #include "InkpotStory.generated.h"
 
@@ -905,6 +906,38 @@ public:
 	FOnInkpotStoryErrorNative& OnStoryError();
 
 	/**
+	 * ReportStoryError
+	 * Routes a message through Inkpot's story error policy ( UInkpotSettings: broadcast,
+	 * log, Message Log, screen, ensure or fatal ) exactly as a runtime error from the Ink
+	 * VM would be. Game code can use it for its own story-level problems so they carry
+	 * the same story / Prosetta provenance prefix.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	void ReportStoryError( const FString &Message, EInkpotStoryErrorType ErrorType = EInkpotStoryErrorType::Error );
+
+	/**
+	 * SetProsettaProvenance / GetProsettaProvenance
+	 * Where the compiled story came from in Prosetta. Copied from the story asset when the
+	 * story begins; used as the prefix of this story's log messages when present.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Story")
+	void SetProsettaProvenance( const FProsettaStoryProvenance &Provenance );
+
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	const FProsettaStoryProvenance& GetProsettaProvenance() const;
+
+	/**
+	 * GetLogContext
+	 * "story <id>" plus the Prosetta provenance when present, e.g.
+	 * "story 3 | Prosetta project 42 live core@17 gen 9f3c1a2b build 77aa01b2".
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Story")
+	FString GetLogContext() const;
+
+	/** Receives InkPlusPlus exception-substitute messages and routes them to the story that is currently executing. */
+	static void OnRuntimeExceptionStatic( const FString &Message );
+
+	/**
 	 * EvaluateFunction
 	 * Evaluates a function defined in Ink script from Blueprint or C++. 
 	 *
@@ -1100,6 +1133,16 @@ protected:
 
 	void BindOnStoryErrorEvent();
 	void OnStoryErrorInternal(FString Message, Ink::EErrorType ErrorType);
+	void ApplyStoryErrorPolicy( const FString &Message, EInkpotStoryErrorType ErrorType );
+
+	// Marks this story as the one executing Ink, so VM exceptions can be attributed to it.
+	struct FActiveStoryScope
+	{
+		explicit FActiveStoryScope( UInkpotStory* InStory );
+		~FActiveStoryScope();
+	private:
+		UInkpotStory* Previous;
+	};
 	void EnsureExternalBindingsValidated();
 	bool BindExternalFunctionInternal( const FString &InFunctionName, TSharedPtr<FStoryExternalFunction> InFunction, bool bInLookAheadSafe, bool bInOverrideExisting );
 
@@ -1163,6 +1206,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UProsettaMetadata> ProsettaMetadata;
+
+	UPROPERTY(Transient)
+	FProsettaStoryProvenance ProsettaProvenance;
 
 	// Flows that became exhausted (no content, no choices) while a line was still
 	// rendering. OnFlowEnded for these is deferred until the flow's last render ends.

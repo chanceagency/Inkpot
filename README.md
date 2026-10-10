@@ -34,6 +34,8 @@ Native Bound Functions: Prosetta C++ modules ( `namespace Prosetta::Bindings::<M
 Editor commands `Prosetta.NativeBindings.Scan` / `Generate` validate module source with Prosetta's C++ rules, cross-check it against `native-bindings/manifest.json` ( functions, arity, lookahead flags, source SHA-256, exclusions ) and write loaders; `Prosetta.Watch.ImportNative ... generate` does the same for staged watch generations.<br>
 `Prosetta.NativeBindings.List` / `Audit` inspect the registry and audit it, and running stories, against the manifest in editor and game builds.<br>
 `UInkpotStory` gains EXTERNAL discovery and validation ( logged on the first Continue instead of a VM abort ), inkcpp-style direct C++ binding, fallback control, observe-all and native lambda variable observers, and an `OnStoryError` event for VM runtime errors and warnings.<br>
+Story error policy: `UInkpotSettings` chooses what happens to story errors and warnings after `OnStoryError` is broadcast ( broadcast only, log, ensure, or fatal ), and whether they also go to the editor Message Log ( **Inkpot** ) and the screen. InkPlusPlus exception-substitute messages are routed through the same policy and attributed to the executing story.<br>
+Story logs are prefixed with Prosetta provenance when present: project id, channel, volume / tag / revision, release tag, generation id and the compiled story's build hash. Provenance is recorded on `UInkpotStoryAsset` by the watch import and the compiled JSON importer, and can be loaded from a sync mirror manifest with `LoadSyncManifestProvenance`.<br>
 
 ### Prosetta-specific changes (1.40.23)
 These changes apply to Inkpot's Prosetta integration, not to Inkpot's core Ink runtime.<br>

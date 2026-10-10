@@ -51,7 +51,8 @@ public class InkpotEditor : ModuleRules
                 "ToolMenus",
                 "GameplayTags",
 
-				"EditorScriptingUtilities"
+				"EditorScriptingUtilities",
+				"MessageLog"
             }
         );
 		

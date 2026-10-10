@@ -170,7 +170,7 @@ bool FInkpotNativeBindingRegistryTest::RunTest(const FString& InParameters)
 		arguments.Add(Ink::FValueType(true));
 		TSharedPtr<Ink::FValueType> result = add->Thunk(arguments);
 		TestTrue(TEXT("bool coerced to int"), result.IsValid() && result->HasSubtype<int32>() && result->GetSubtype<int32>() == 3);
-		AddExpectedError(TEXT("expects 2 argument(s) but Ink passed 1"), EAutomationExpectedErrorFlags::Contains, 1);
+		AddExpectedError(TEXT("expects 2 argument(s) but Ink passed 1"), EAutomationExpectedErrorFlags::Contains, 1, false);
 		arguments.RemoveAt(1);
 		TestFalse(TEXT("wrong arity rejected"), add->Thunk(arguments).IsValid());
 	}
@@ -199,7 +199,7 @@ bool FInkpotNativeBindingRuntimeTest::RunTest(const FString& InParameters)
 
 	// Nothing bound yet: validation reports every external and the report lists them unbound.
 	TArray<FString> unbound;
-	AddExpectedError(TEXT("but nothing is bound to it"), EAutomationExpectedErrorFlags::Contains, 5);
+	AddExpectedError(TEXT("but nothing is bound to it"), EAutomationExpectedErrorFlags::Contains, 5, false);
 	TestFalse(TEXT("validation fails while unbound"), story->ValidateExternalBindings(unbound, true));
 	TestEqual(TEXT("five unbound"), unbound.Num(), 5);
 	TestFalse(TEXT("not bound"), story->IsExternalFunctionBound(TEXT("inkpot_test_add")));

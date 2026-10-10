@@ -61,6 +61,7 @@ UInkpotStory* UInkpotStories::BeginStory( UInkpotStoryAsset* InInkpotStoryAsset 
 	if (storyNew->GetID() != FInkpotStoryInternal::BadStoryHandle)
 	{
 		const UInkpotSettings* settings = GetDefault<UInkpotSettings>();
+		storyNew->SetProsettaProvenance( InInkpotStoryAsset->GetProsettaProvenance() );
 		storyNew->SetAllowExternalFunctionFallbacks( settings->bAllowExternalFunctionFallbacks );
 		if (settings->bAutoBindNativeFunctions)
 			storyNew->BindRegisteredNativeFunctions( TArray<FString>(), false );
@@ -150,6 +151,7 @@ UInkpotStory* UInkpotStories::Reload( UInkpotStoryAsset* InInkpotStoryAsset )
 
 	UInkpotStory *story = storyInProgressPtr->Get();
 	story->ResetContent( storyInternal );
+	story->SetProsettaProvenance( InInkpotStoryAsset->GetProsettaProvenance() );
 	// Reloaded content may call EXTERNALs the previous content did not; existing bindings are kept.
 	if (GetDefault<UInkpotSettings>()->bAutoBindNativeFunctions)
 		story->BindRegisteredNativeFunctions( TArray<FString>(), false );

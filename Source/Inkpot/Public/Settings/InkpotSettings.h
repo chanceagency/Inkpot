@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "Inkpot/NativeBindings/InkpotNativeBindingTypes.h"
 #include "InkpotSettings.generated.h"
 
 // Runtime settings for Inkpot
@@ -45,11 +46,41 @@ public:
 	bool bAllowExternalFunctionFallbacks {false};
 
 	/*
-	Log runtime errors and warnings reported by the Ink VM through the Inkpot log
-	category, in addition to broadcasting the story's OnStoryError event.
+	What Inkpot does with an error the Ink VM reports while running a story ( runtime
+	errors, unbound EXTERNALs, native binding mismatches ). The story's OnStoryError
+	event is broadcast first in every case, so game code can add its own handling.
 	*/
 	UPROPERTY(config, EditAnywhere, Category = "Diagnostics")
-	bool bLogStoryErrors {true};
+	EInkpotStoryErrorAction StoryErrorAction {EInkpotStoryErrorAction::Log};
+
+	/*
+	What Inkpot does with a warning the Ink VM reports while running a story.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics")
+	EInkpotStoryErrorAction StoryWarningAction {EInkpotStoryErrorAction::Log};
+
+	/*
+	Also send story errors and warnings to the editor Message Log ( Window > Developer
+	Tools > Message Log > Inkpot ), where they persist and can be reviewed after Play.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics")
+	bool bStoryErrorsToMessageLog {true};
+
+	/*
+	Also show story errors on screen while playing ( GEngine debug messages ).
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics")
+	bool bStoryErrorsOnScreen {false};
+
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics", meta = (EditCondition = "bStoryErrorsOnScreen", ClampMin = "1.0"))
+	float StoryErrorOnScreenSeconds {8.0f};
+
+	/*
+	Prefix story log messages with the story's Prosetta provenance ( project id, channel,
+	volume, revision, generation and build hash ) when the story asset carries it.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics")
+	bool bIncludeProsettaProvenanceInLogs {true};
 
 	virtual FName GetCategoryName() const override;
 #if WITH_EDITOR

@@ -136,3 +136,20 @@ enum class EInkpotStoryErrorType : uint8
 	Warning,
 	Error
 };
+
+/**
+ * What Inkpot does with a story error or warning after broadcasting OnStoryError.
+ * Chosen per severity in UInkpotSettings.
+ */
+UENUM(BlueprintType)
+enum class EInkpotStoryErrorAction : uint8
+{
+	/** Only broadcast the OnStoryError event; nothing is logged. */
+	BroadcastOnly,
+	/** Log through the Inkpot log category ( Output Log; Message Log and screen are separate switches ). */
+	Log,
+	/** Log, then trip an ensure so a debugger breaks and a non-fatal crash report is written. */
+	Ensure,
+	/** Log, then fail fatally. The closest equivalent to an uncaught C# ink exception. */
+	Fatal
+};

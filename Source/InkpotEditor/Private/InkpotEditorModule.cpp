@@ -9,6 +9,7 @@
 #include "EditorUtilitySubsystem.h"
 #include "Interfaces/IPluginManager.h"
 #include "GameplayTags/InkpotTagMenu.h"
+#include "MessageLogModule.h"
 
 #define LOCTEXT_NAMESPACE "FInkEditorModule"
 
@@ -16,12 +17,26 @@ void FInkpotEditorModule::StartupModule()
 {
 	InitAssetCategory();
 	InitMenuOptions();
+	InitMessageLog();
 	UInkpotTagMenu::RegisterMenuExtensions(this);
 }
 
 void FInkpotEditorModule::ShutdownModule()
 {
 	UInkpotTagMenu::UnregisterMenuExtensions(this);
+	if (FModuleManager::Get().IsModuleLoaded("MessageLog"))
+		FModuleManager::GetModuleChecked<FMessageLogModule>("MessageLog").UnregisterLogListing("Inkpot");
+}
+
+void FInkpotEditorModule::InitMessageLog()
+{
+	// Story errors and warnings are mirrored here when UInkpotSettings::bStoryErrorsToMessageLog is on.
+	FMessageLogModule& messageLog = FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog");
+	FMessageLogInitializationOptions options;
+	options.bShowPages = true;
+	options.bAllowClear = true;
+	options.bShowFilters = true;
+	messageLog.RegisterLogListing("Inkpot", LOCTEXT("InkpotMessageLog", "Inkpot"), options);
 }
 
 void FInkpotEditorModule::InitAssetCategory()
