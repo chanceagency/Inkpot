@@ -62,6 +62,16 @@ def main():
     if not tests or result.get('failed', 0) or result.get('notRun', 0) or any(test.get('state') != 'Success' for test in tests):
         raise RuntimeError('Automation failed, skipped tests, or did not run. Inspect Saved/Automation/agent-verify.')
     print(f"agent:verify passed: {len(tests)} tests, no failures or skips.")
+    if args.tests == 'Inkpot.Prosetta':
+        cold = report / 'cold-load'
+        cold.mkdir(exist_ok=True)
+        cold_index = cold / 'index.json'
+        cold_index.unlink(missing_ok=True)
+        run([str(editor), str(project), '-ExecCmds=Automation RunTests Inkpot.Prosetta.WatchPersistence', '-TestExit=Automation Test Queue Empty', f'-ReportExportPath={cold}', '-unattended', '-nopause', '-nosplash', '-nullrhi', '-stdout', '-FullStdOutLogOutput'], cold / 'tests.log')
+        result = json.loads(cold_index.read_text(encoding='utf-8-sig'))
+        if len(result.get('tests', [])) != 1 or result.get('failed', 0) or result.get('notRun', 0) or result['tests'][0].get('state') != 'Success':
+            raise RuntimeError('Fresh-process audio/localization package reload failed.')
+        print('Fresh-process saved audio/localization verification passed: 1/1, no failures or skips.')
     if args.commit_message_file:
         run(['git', 'commit', '--file', str(args.commit_message_file.resolve())])
 

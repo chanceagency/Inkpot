@@ -49,6 +49,14 @@ bool FProsettaCompiledImportTest::RunTest(const FString& InParameters)
  FString decoded, error;
  TestFalse(TEXT("unsupported version rejected"), factory->DecodeCompiledJSON(TEXT("{\"inkVersion\":22,\"root\":[null]}"), decoded, error));
  TestTrue(TEXT("object wrapper accepted"), factory->DecodeCompiledJSON(TEXT("{\"story\":") + compiled + TEXT("}"), decoded, error));
+ const FString sourcePath = directory / TEXT("source.ink");
+ FFileHelper::SaveStringToFile(TEXT("Source import retained.\n-> END\n"), *sourcePath);
+ UInkpotStoryAsset* sourceAsset = Cast<UInkpotStoryAsset>(factory->FactoryCreateFile(UInkpotStoryAsset::StaticClass(), GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), UInkpotStoryAsset::StaticClass()), RF_Transient, sourcePath, nullptr, GWarn, canceled));
+ if (TestNotNull(TEXT("existing source importer still compiles"), sourceAsset))
+ {
+  Ink::FStory sourceStory(sourceAsset->GetCompiledJSON());
+  TestEqual(TEXT("source import runtime control"), sourceStory.Continue(), FString(TEXT("Source import retained.\n")));
+ }
  IFileManager::Get().DeleteDirectory(*directory, false, true);
  return true;
 }

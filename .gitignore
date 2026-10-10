@@ -4,3 +4,4 @@ Binaries/
 
 # Isolated editor verification host and automation evidence
 Saved/
+__pycache__/
