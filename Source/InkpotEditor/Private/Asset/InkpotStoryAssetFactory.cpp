@@ -11,6 +11,8 @@
 #include "Settings/InkpotSettings.h"
 #include "ImportPipeline/InkpotImportPipeline.h"
 #include "ImportPipeline/InkpotImportPipelineLibrary.h"
+#include "Serialization/JsonSerializer.h"
+#include "Inkpot/Prosetta/ProsettaMetadata.h"
 
 #define LOCTEXT_NAMESPACE "InkpotStoryAssetFactory"
 
@@ -36,6 +38,7 @@ namespace
 
 UInkpotStoryAssetFactory::UInkpotStoryAssetFactory()
 {
+	Formats.Add(TEXT("json;Compiled Ink Story (.ink.json)"));
 	Formats.Add(FString(TEXT("ink;")) + LOCTEXT("FormatTxt", "Ink Story File").ToString());
 	SupportedClass = UInkpotStoryAsset::StaticClass();
 	bCreateNew = false;
@@ -45,7 +48,7 @@ UInkpotStoryAssetFactory::UInkpotStoryAssetFactory()
 
 bool UInkpotStoryAssetFactory::FactoryCanImport(const FString& Filename)
 {
-	return Filename.EndsWith("ink");
+	return FPaths::GetExtension(Filename).Equals(TEXT("ink"), ESearchCase::IgnoreCase) || Filename.EndsWith(TEXT(".ink.json"), ESearchCase::IgnoreCase);
 }
 
 FSoftClassPath UInkpotStoryAssetFactory::GetCustomPiplineClass()  const
@@ -65,7 +68,21 @@ UObject* UInkpotStoryAssetFactory::FactoryCreateFile(UClass* InClass, UObject* I
 	GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPreImport(this, InClass, InParent, InName, *fileExtension);
 
 	UInkpotStoryAsset* newAsset = nullptr;
-	if( IsUsingCustomPipeline() )
+	if (FPaths::GetExtension(InFullFilePath).Equals(TEXT("json"), ESearchCase::IgnoreCase))
+	{
+		FString compiled, metadata, error;
+		const FString sidecar = FPaths::Combine(FPaths::GetPath(InFullFilePath), FPaths::GetBaseFilename(InFullFilePath) + TEXT(".prosetta.json"));
+		if (ReadCompiledFiles(InFullFilePath, sidecar, compiled, metadata, error))
+		{
+			newAsset = NewObject<UInkpotStoryAsset>(InParent, InClass, InName, InFlags);
+			newAsset->SetCompiledJSON(compiled);
+			newAsset->SetProsettaJSON(metadata);
+			newAsset->UpdateAssetInfo(InFullFilePath);
+		}
+		else if (InWarn)
+			InWarn->Logf(ELogVerbosity::Error, TEXT("Compiled Ink import failed: %s"), *error);
+	}
+	else if( IsUsingCustomPipeline() )
 		newAsset = ExecuteCustomImportPipeline(InClass, InParent, InName, InFlags, InFullFilePath, InParms, InWarn, bOutOperationCanceled);
 	else 
 		newAsset = ExecuteStandardImportPipeline(InClass, InParent, InName, InFlags, InFullFilePath, InParms, InWarn, bOutOperationCanceled);
@@ -161,6 +178,18 @@ EReimportResult::Type UInkpotStoryAssetFactory::Reimport(UObject* Obj)
 		UAssetImportData* importData = InkpotStoryAsset->GetAssetImportData();
 		if ( importData )
 		{
+			const FString filename = importData->GetFirstFilename();
+			if (FPaths::GetExtension(filename).Equals(TEXT("json"), ESearchCase::IgnoreCase))
+			{
+				const FString sidecar = FPaths::Combine(FPaths::GetPath(filename), FPaths::GetBaseFilename(filename) + TEXT(".prosetta.json"));
+				FString error;
+				if (!ApplyCompiledFiles(InkpotStoryAsset, filename, sidecar, error))
+				{
+					UE_LOG(LogTemp, Error, TEXT("Compiled Ink reimport failed: %s"), *error);
+					return EReimportResult::Failed;
+				}
+				return EReimportResult::Succeeded;
+			}
 			bool bOperationCancelled = false;
 			if (ImportObject(InkpotStoryAsset ->GetClass(), InkpotStoryAsset ->GetOuter(), *InkpotStoryAsset->GetName(), RF_Public | RF_Standalone, importData->GetFirstFilename(), nullptr, bOperationCancelled) != nullptr)
 			{
@@ -175,6 +204,92 @@ EReimportResult::Type UInkpotStoryAssetFactory::Reimport(UObject* Obj)
 int32 UInkpotStoryAssetFactory::GetPriority() const
 {
 	return ImportPriority;
+}
+
+bool UInkpotStoryAssetFactory::DecodeCompiledJSON(const FString& InJSON, FString& OutCompiledJSON, FString& OutError)
+{
+	TSharedPtr<FJsonObject> root;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(InJSON), root) || !root.IsValid())
+	{
+		OutError = TEXT("Malformed or truncated compiled story JSON.");
+		return false;
+	}
+	OutCompiledJSON = InJSON;
+	if (const TSharedPtr<FJsonValue> wrapped = root->TryGetField(TEXT("story")))
+	{
+		if (wrapped->Type == EJson::String)
+		{
+			OutCompiledJSON = wrapped->AsString();
+			if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(OutCompiledJSON), root) || !root.IsValid())
+			{
+				OutError = TEXT("Malformed wrapped compiled story JSON.");
+				return false;
+			}
+		}
+		else if (wrapped->Type == EJson::Object)
+		{
+			root = wrapped->AsObject();
+			OutCompiledJSON.Empty();
+			FJsonSerializer::Serialize(root.ToSharedRef(), TJsonWriterFactory<>::Create(&OutCompiledJSON));
+		}
+		else
+		{
+			OutError = TEXT("Compiled story wrapper must contain an object or JSON string.");
+			return false;
+		}
+	}
+	double version;
+	const TArray<TSharedPtr<FJsonValue>>* content = nullptr;
+	if (!root->TryGetNumberField(TEXT("inkVersion"), version) || version < 18 || version > 21 || version != FMath::FloorToDouble(version) ||
+		!root->TryGetArrayField(TEXT("root"), content) || content->IsEmpty() ||
+		(content->Last()->Type != EJson::Null && content->Last()->Type != EJson::Object))
+	{
+		OutError = TEXT("Expected compatible Ink JSON (inkVersion 18–21 and a terminated root container).");
+		return false;
+	}
+	return true;
+}
+
+bool UInkpotStoryAssetFactory::ReadCompiledFiles(const FString& InFilename, const FString& InMetadataFilename, FString& OutCompiledJSON, FString& OutMetadataJSON, FString& OutError)
+{
+	FString json;
+	if (!FFileHelper::LoadFileToString(json, *InFilename))
+	{
+		OutError = TEXT("Cannot read compiled story file.");
+		return false;
+	}
+	if (!DecodeCompiledJSON(json, OutCompiledJSON, OutError))
+		return false;
+	OutMetadataJSON.Empty();
+	if (!InMetadataFilename.IsEmpty() && FPaths::FileExists(InMetadataFilename))
+	{
+		if (!FFileHelper::LoadFileToString(OutMetadataJSON, *InMetadataFilename))
+		{
+			OutError = TEXT("Cannot read Prosetta metadata sidecar.");
+			return false;
+		}
+		TSharedPtr<FJsonObject> metadata;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(OutMetadataJSON), metadata) || !metadata.IsValid() || !metadata->HasField(TEXT("lines")))
+		{
+			OutError = TEXT("Malformed Prosetta line metadata sidecar.");
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UInkpotStoryAssetFactory::ApplyCompiledFiles(UInkpotStoryAsset* InAsset, const FString& InFilename, const FString& InMetadataFilename, FString& OutError)
+{
+	FString compiled, metadata;
+	if (!InAsset || !ReadCompiledFiles(InFilename, InMetadataFilename, compiled, metadata, OutError))
+		return false;
+	InAsset->Modify();
+	InAsset->SetCompiledJSON(compiled);
+	InAsset->SetProsettaJSON(metadata);
+	InAsset->UpdateAssetInfo(InFilename);
+	InAsset->MarkPackageDirty();
+	InAsset->PostEditChange();
+	return true;
 }
 
 #undef LOCTEXT_NAMESPACE

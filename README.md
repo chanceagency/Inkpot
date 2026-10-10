@@ -253,3 +253,101 @@ for creating Ink. We've used this for much more than narrative.</br></br>
 for giving us a good basis for creating InkPlusPlus.</br></br>
 **Colin, Seb & Canute at TCR**</br>
 for the brilliant job in porting the Ink Engine Runtime to C++, along with the editor asset handling, unit tests and Unreal integration, most of the work here in fact.<br>
+
+## Compiled Prosetta stories
+
+Import a Prosetta compiled story as `<name>.ink.json`. The editor imports the
+compiled Ink directly and never invokes inklecate or the custom source compiler
+pipeline for JSON. Raw Ink JSON is retained byte-for-byte; a Prosetta `story`
+object/string wrapper is unwrapped without recompilation. Place optional line
+metadata beside it as `<name>.ink.prosetta.json`.
+
+Reimport updates the existing story asset in place. Malformed/truncated JSON,
+unsupported Ink format versions, and malformed metadata leave the last imported
+story intact and report an error. Existing `.ink` imports keep their standard or
+custom source pipeline.
+
+Maintainers can run `python3 Scripts/agent-verify.py` against UE 5.8 (set `UE_ROOT`
+for another installation). It creates an ignored minimal verification project
+using this shipping plugin, builds it, and rejects missing, skipped, or failing
+Unreal automation reports. Use `--commit-message-file /absolute/message.txt` to
+commit staged changes only after the verification succeeds. Evidence is saved
+under `Saved/Automation/agent-verify`.
+
+## Watch completed CLI generations in the editor
+
+Use the Prosetta sync CLI version delivering NDJSON event schema 1 (`watch --json`),
+and an existing CLI configuration containing the project token. Keep credentials
+in the CLI configuration; they are never put in Unreal assets. In the Unreal
+Output Log console, start the sidecar with quoted absolute paths:
+
+```text
+Prosetta.Watch.Start "/absolute/prosetta-sync" "/absolute/prosetta-sync.config.json" "/absolute/ffmpeg"
+Prosetta.Watch.Status
+Prosetta.Watch.Stop
+```
+
+The FFmpeg argument is optional for WAV-only projects. For compressed selected
+voice takes, install FFmpeg for your editor platform and pass its executable
+path; a missing decoder or decode failure preserves the last imported generation
+and reports an actionable error. The plugin runs that executable directly.
+
+The editor consumes only `generation-completed` events. It checks the immutable
+manifest's generation/project identity and every artifact's SHA-256/size before
+changing published assets. Downloads continue during Play. Imports wait for
+Play/simulation and queued Play setup to finish, asynchronous loading/package
+saving to finish, and active editor transactions to end. New events replace an
+older queued live revision; repeated/older generations cannot roll back imported
+assets. Active Ink story instances are never hot reloaded.
+
+Assets live under `/Game/Prosetta/Project<id>/<Live|Release>_<scope-hash>/`.
+The `Generation` asset maps artifact keys to stable story/supporting identities.
+Compiled stories use the downloaded Ink JSON. Supporting metadata and localization
+use `UProsettaSyncedArtifact`; `ResolveLocalizedText(lineId, languageCode)` reads
+its baked lookup map. Selected audio artifacts use the same stable wrapper and a
+persistent nested `Audio` SoundWave, held by a hard reference. Reference the
+wrapper from your game, then read its current Audio property for each playback;
+selected take replacement does not change the wrapper's identity. Unchanged media
+is verified but not decoded/reimported. Localization/source data and audio remain
+owned by the selected generation. Other binary formats stay in the immutable CLI
+cache for game-specific adapters.
+
+A removed key leaves the active Generation map. The watcher persists and rescans
+its ownership registry, then uses Unreal's checked deletion model to remove unused
+owned assets and their packages. External memory/disk references, undo references,
+unconfirmed scans, or failed deletion preserve the identity in an editor-only
+retirement map; reappearing referenced keys restore that same identity. The
+retirement map is omitted from cooking, while an explicit external game reference
+can still cook an old asset. The watcher never force-deletes objects or source
+files. After removing user references, run `Prosetta.Watch.Cleanup "namespace"` to
+recheck retirement; each accepted generation also performs this checked pass.
+Cleanup failures report pending repair after generation acceptance; they do not
+roll back the accepted generation. User-created packages at a generated path cause an import error instead of an
+overwrite.
+
+Live and latest-release watches have separate scope namespaces. A blocked or
+missing release retains the last imported assets. Native sources are staged in
+the completed CLI generation and are never copied automatically. For an explicit
+C++ import, take the applied namespace from `Prosetta.Watch.Status` and run:
+
+```text
+Prosetta.Watch.ImportNative "Project42/Live_<scope-hash>" "/absolute/game/Source/MyModule/Prosetta"
+```
+
+This checks staged source hashes, preserves relative C++ module paths, and requires
+the same editor idle conditions. Review the copied sources and rebuild explicitly.
+C# remains staged for the Unity integration.
+
+The subsystem also exposes these commands to editor Blueprints and C++ through
+`UProsettaWatchSubsystem`. Shipping player builds contain cooked content only;
+CLI watch and credentials exist exclusively in the editor module.
+
+The local verification workflow exercises compiled import, source import control,
+Play/stop deferral, out-of-order supersession, stable identities, changed localization
+and WAV import, corrupt-generation preservation, checked owned package removal,
+referenced retirement/resurrection, unrelated user-package preservation, frozen
+isolation, native staging/explicit import, and a real process/ticker sidecar fixture.
+It then launches a fresh editor process to reload saved localization/audio and
+verify unreferenced packages remain absent and saved user references remain intact.
+This is editor fixture evidence; a human project pilot, Windows validation, and a
+cooked game/audio acceptance run are still required before milestone acceptance.

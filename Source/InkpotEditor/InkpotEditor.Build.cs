@@ -26,7 +26,8 @@ public class InkpotEditor : ModuleRules
                 "CoreUObject",
                 "Engine",
 
-                "Projects"
+                "Projects",
+                "EditorSubsystem"
             }
 		);
 		
@@ -38,6 +39,8 @@ public class InkpotEditor : ModuleRules
                 "InkPlusPlus",
                 "Inkpot",
                 "Json",
+                "AssetRegistry",
+                "AudioEditor",
 
 				"Slate",
 				"SlateCore",
@@ -52,6 +55,8 @@ public class InkpotEditor : ModuleRules
             }
         );
 		
+		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
+
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]
 			{

@@ -12,7 +12,13 @@ class INKPOTEDITOR_API UInkpotStoryAssetFactory : public UFactory, public FReimp
 {
 	GENERATED_BODY()
 
+public:
 	UInkpotStoryAssetFactory();
+
+	// Preflight without touching an asset or invoking inklecate.
+	static bool DecodeCompiledJSON(const FString& InJSON, FString& OutCompiledJSON, FString& OutError);
+	static bool ReadCompiledFiles(const FString& InFilename, const FString& InMetadataFilename, FString& OutCompiledJSON, FString& OutMetadataJSON, FString& OutError);
+	static bool ApplyCompiledFiles(UInkpotStoryAsset* InAsset, const FString& InFilename, const FString& InMetadataFilename, FString& OutError);
 	//~ UFactory interface
 	virtual bool FactoryCanImport(const FString& InFilename) override;
 	virtual UObject* FactoryCreateFile(UClass* InClass, UObject* InParent, FName InName, EObjectFlags InFlags, const FString& InFilename, const TCHAR* InParms, FFeedbackContext* InWarn, bool& bOutOperationCanceled) override;
