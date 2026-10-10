@@ -253,3 +253,23 @@ for creating Ink. We've used this for much more than narrative.</br></br>
 for giving us a good basis for creating InkPlusPlus.</br></br>
 **Colin, Seb & Canute at TCR**</br>
 for the brilliant job in porting the Ink Engine Runtime to C++, along with the editor asset handling, unit tests and Unreal integration, most of the work here in fact.<br>
+
+## Compiled Prosetta stories
+
+Import a Prosetta compiled story as `<name>.ink.json`. The editor imports the
+compiled Ink directly and never invokes inklecate or the custom source compiler
+pipeline for JSON. Raw Ink JSON is retained byte-for-byte; a Prosetta `story`
+object/string wrapper is unwrapped without recompilation. Place optional line
+metadata beside it as `<name>.ink.prosetta.json`.
+
+Reimport updates the existing story asset in place. Malformed/truncated JSON,
+unsupported Ink format versions, and malformed metadata leave the last imported
+story intact and report an error. Existing `.ink` imports keep their standard or
+custom source pipeline.
+
+Maintainers can run `python3 Scripts/agent-verify.py` against UE 5.8 (set `UE_ROOT`
+for another installation). It creates an ignored minimal verification project
+using this shipping plugin, builds it, and rejects missing, skipped, or failing
+Unreal automation reports. Use `--commit-message-file /absolute/message.txt` to
+commit staged changes only after the verification succeeds. Evidence is saved
+under `Saved/Automation/agent-verify`.

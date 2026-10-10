@@ -1,3 +1,6 @@
 Binaries/
 /Intermediate
 .DS_Store
+
+# Isolated editor verification host and automation evidence
+Saved/
