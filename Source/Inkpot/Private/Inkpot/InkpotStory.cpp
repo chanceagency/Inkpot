@@ -196,6 +196,7 @@ void UInkpotStory::ChoosePathStringInternal( const FString& InPath, const TArray
 	TArray<TSharedPtr<Ink::FValueType>> values;
 	if(!CreateInkValues( InValues, values ))
 		return;
+	FActiveStoryScope scope(this);
 	StoryInternal->ChoosePathString( InPath, true, values );
 }
 
@@ -315,6 +316,7 @@ void UInkpotStory::ChooseChoiceIndex( int32 InChoiceIndex )
 bool UInkpotStory::SwitchFlow( const FString &InFlowName )
 {
 	bool bIsNewFlow = !IsFlowAlive( InFlowName );
+	FActiveStoryScope scope(this);
 	StoryInternal->SwitchFlow( InFlowName );
 	OnFlowChangeInternal();
 	return bIsNewFlow;
@@ -421,12 +423,14 @@ FGameplayTag UInkpotStory::GetKnotFromPathGT(const FGameplayTag InPath, bool& Ou
 void UInkpotStory::SetValue(const FString &InVariable, FInkpotValue InValue, bool &OutSuccess )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	OutSuccess = variableState->SetVariable( InVariable, Ink::FValue::Create(**InValue) );
 }
 
 void UInkpotStory::SetValueGT(FGameplayTag InVariable, FInkpotValue InValue )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	variableState->SetVariable( UInkpotGameplayTagLibrary::VariableTagToString(InVariable), Ink::FValue::Create(**InValue) );
 }
 
@@ -458,12 +462,14 @@ void UInkpotStory::GetValueGT(FGameplayTag InVariable, FInkpotValue &OutReturnVa
 void UInkpotStory::SetBool(const FString &InVariable, bool bInValue, bool &OutSuccess )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	OutSuccess = variableState->SetVariable( InVariable, MakeShared<Ink::FValueBool>( bInValue ) );
 }
 
 void UInkpotStory::SetBoolGT(FGameplayTag InVariable, bool bInValue)
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	variableState->SetVariable( UInkpotGameplayTagLibrary::VariableTagToString(InVariable), MakeShared<Ink::FValueBool>( bInValue ) );
 }
 
@@ -480,12 +486,14 @@ void UInkpotStory::GetBoolGT(FGameplayTag InVariable, bool &OutReturnValue)
 void UInkpotStory::SetInt(const FString &InVariable, int32 InValue, bool &OutSuccess )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	OutSuccess = variableState->SetVariable( InVariable, MakeShared<Ink::FValueInt>( InValue ) );
 }
 
 void UInkpotStory::SetIntGT(FGameplayTag InVariable, int32 InValue )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	variableState->SetVariable( UInkpotGameplayTagLibrary::VariableTagToString(InVariable), MakeShared<Ink::FValueInt>( InValue ) );
 }
 
@@ -502,12 +510,14 @@ void UInkpotStory::GetIntGT(FGameplayTag InVariable, int32 &OutValue)
 void UInkpotStory::SetFloat(const FString &InVariable, float InValue, bool &OutSuccess )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	OutSuccess = variableState->SetVariable( InVariable, MakeShared<Ink::FValueFloat>(InValue));
 }
 
 void UInkpotStory::SetFloatGT(FGameplayTag InVariable, float InValue)
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	variableState->SetVariable( UInkpotGameplayTagLibrary::VariableTagToString(InVariable), MakeShared<Ink::FValueFloat>(InValue));
 }
 
@@ -524,12 +534,14 @@ void UInkpotStory::GetFloatGT(FGameplayTag InVariable, float &OutReturnValue)
 void UInkpotStory::SetString(const FString &InVariable, const FString &InValue, bool &OutSuccess )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	OutSuccess = variableState->SetVariable( InVariable, MakeShared<Ink::FValueString>(InValue) );
 }
 
 void UInkpotStory::SetStringGT(FGameplayTag InVariable, const FString &InValue)
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	variableState->SetVariable( UInkpotGameplayTagLibrary::VariableTagToString(InVariable), MakeShared<Ink::FValueString>(InValue) );
 }
 
@@ -546,12 +558,14 @@ void UInkpotStory::GetStringGT( FGameplayTag InVariable, FString &OutReturnValue
 void UInkpotStory::SetEmpty(const FString &InVariable, bool &OutSuccess )
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	OutSuccess  = variableState->SetVariable( InVariable, MakeShared<Ink::FValue>() );
 }
 
 void UInkpotStory::SetEmptyGT(FGameplayTag InVariable)
 {
 	TSharedPtr<Ink::FVariableState> variableState = StoryInternal->GetVariablesState();
+	FActiveStoryScope scope(this);
 	variableState->SetVariable( UInkpotGameplayTagLibrary::VariableTagToString(InVariable), MakeShared<Ink::FValue>() );
 }
 
@@ -577,6 +591,7 @@ int32 UInkpotStory::GetVariableKeys( TArray<FString> &OutKeys )
 
 void UInkpotStory::ObserveVariable( const FString& InVariable, TSharedPtr<FStoryVariableObserver> InObserver )
 {
+	FActiveStoryScope scope(this);
 	StoryInternal->ObserveVariable( InVariable, InObserver );
 }
 
@@ -1065,6 +1080,7 @@ void UInkpotStory::EvaluateFunction(const FString& FunctionName, const TArray<FI
 void UInkpotStory::EvalFunction(const FString& FunctionName, FInkpotValue& OutReturnValue, FString& CapturedText)
 {
 	TArray<TSharedPtr<Ink::FValueType>> values;
+	FActiveStoryScope scope(this);
 	TSharedPtr<Ink::FValueType> returnValue = StoryInternal->EvaluateFunction(FunctionName, CapturedText, values);
 	OutReturnValue = returnValue;
 }
@@ -1140,6 +1156,7 @@ void UInkpotStory::ResetContent( TSharedPtr<FInkpotStoryInternal> InNewStoryCont
 
 void UInkpotStory::ResetState()
 {
+	FActiveStoryScope scope(this);
 	StoryInternal->ResetState();
 	BindOnVariableStateChangeEvent();
 }
