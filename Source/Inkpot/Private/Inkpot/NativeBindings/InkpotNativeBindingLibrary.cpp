@@ -152,12 +152,16 @@ FInkpotNativeBindingAudit UInkpotNativeBindingLibrary::AuditRegistryAgainstManif
 				audit.Add(TEXT("function_extra"), ESeverity::Warning, module->ModuleName, function.Descriptor.Name, TEXT("Registered but absent from the manifest; the loader may be stale."));
 	}
 
-	// Registry -> manifest: Prosetta-sourced modules must still be shipped.
+	// Registry -> manifest: Prosetta-sourced modules must still be shipped; local modules are noted.
 	for (const FInkpotNativeBindingModule* registered : registry.GetModules())
 	{
-		if (registered->Source != EInkpotNativeBindingSource::Prosetta)
-			continue;
 		const FProsettaNativeBindingModule* module = Manifest.FindModule(registered->Name);
+		if (registered->Source != EInkpotNativeBindingSource::Prosetta)
+		{
+			if (!module)
+				audit.Add(TEXT("local_module"), ESeverity::Info, registered->Name, FString(), TEXT("Local module; not in the Prosetta manifest, so it is not audited against it."));
+			continue;
+		}
 		const FProsettaNativeBindingLanguageEntry* cpp = module ? module->FindCpp() : nullptr;
 		if (!module || !cpp)
 			audit.Add(TEXT("module_not_in_manifest"), ESeverity::Warning, registered->Name, FString(), TEXT("Registered as a Prosetta module but the manifest has no C++ entry for it; it may have been deleted in Prosetta."));
