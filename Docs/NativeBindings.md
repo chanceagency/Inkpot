@@ -172,6 +172,19 @@ warning ).
 | `bStoryErrorsOnScreen` / `StoryErrorOnScreenSeconds` | off / 8 | Also show them as on-screen debug messages. |
 | `bIncludeProsettaProvenanceInLogs` | on | Prefix story logs with the story's Prosetta provenance when the asset carries it. |
 
+`StoryErrorAction` / `StoryWarningAction` replace the old `bLogStoryErrors` switch.
+The settings live in `Config/DefaultInkpot.ini` under `[/Script/Inkpot.InkpotSettings]`.
+A project that still has `bLogStoryErrors=False` there keeps its silence: on load,
+each action that is not set explicitly in that section becomes `BroadcastOnly`, and
+Inkpot logs a one-time deprecation warning. Replace the legacy key with the explicit
+settings to clear the warning:
+
+```ini
+[/Script/Inkpot.InkpotSettings]
+StoryErrorAction=BroadcastOnly
+StoryWarningAction=BroadcastOnly
+```
+
 `UInkpotStory` API ( Blueprint and C++ unless noted ):
 
 - `GetDeclaredExternalFunctions()` – every `EXTERNAL` the compiled story calls, with
@@ -191,7 +204,25 @@ warning ).
   exception-substitute messages ( attributed to the story that was executing ),
   unbound `EXTERNAL`s and native binding mismatches. `ReportStoryError(Message, Type)`
   lets game code push its own problems through the same policy.
+- `GetPendingStoryErrorCount()` – C++ only; see *Errors found while a story begins* below.
 - `GetLogContext()` – `story <id> | <provenance>`; `SetProsettaProvenance` / `GetProsettaProvenance`.
+
+### Errors found while a story begins
+
+`BeginStory` and `Reload` auto-bind native functions before they return the story, so
+no caller can have bound `OnStoryError` when an arity mismatch is found. Those errors
+are held on the story instead of being lost:
+
+- The Output Log, Message Log and on-screen message are written immediately, as for
+  any other error under the active `StoryErrorAction`.
+- The `OnStoryError` broadcast ( native and Blueprint ) and any `Ensure` / `Fatal`
+  escalation wait until the story's first `Continue`, `ContinueMaximally` or
+  `ChoosePath` / `ChoosePathString`. They run before first-Continue validation, using
+  the action that was active when the error was found, so subscribers bound right after
+  `BeginStory` receive the binding error first and the unbound-`EXTERNAL` error next.
+- A story ended before it is ever continued drops held errors; they were already logged.
+- Calling `BindRegisteredNativeFunctions` yourself still broadcasts immediately. C++ can
+  hold errors around its own setup with `UInkpotStory::FDeferStoryErrorsScope`.
 
 ### Story provenance in logs
 

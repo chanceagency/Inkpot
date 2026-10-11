@@ -203,7 +203,7 @@ namespace
    for (UPackage* package : LoadedPackages())
    {
     TArray<UObject*> objects;
-    GetObjectsWithPackage(package, objects, false);
+    GetObjectsWithPackage(package, objects, EGetObjectsFlags::None);
     for (UObject* object : objects)
     {
      object->ClearFlags(RF_Public | RF_Standalone);

@@ -82,6 +82,15 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Diagnostics")
 	bool bIncludeProsettaProvenanceInLogs {true};
 
+	/*
+	Migrate the removed bLogStoryErrors key. When Section in ConfigFilename has
+	bLogStoryErrors=False, set StoryErrorAction and StoryWarningAction to BroadcastOnly
+	unless that action is set explicitly in the same section. Returns true when the legacy
+	key was found ( whatever its value ). Does not log; PostInitProperties warns once.
+	*/
+	bool ApplyLegacyStoryErrorConfig(const FString& Section, const FString& ConfigFilename);
+
+	virtual void PostInitProperties() override;
 	virtual FName GetCategoryName() const override;
 #if WITH_EDITOR
 	virtual FText GetSectionText() const override;

@@ -64,7 +64,11 @@ UInkpotStory* UInkpotStories::BeginStory( UInkpotStoryAsset* InInkpotStoryAsset 
 		storyNew->SetProsettaProvenance( InInkpotStoryAsset->GetProsettaProvenance() );
 		storyNew->SetAllowExternalFunctionFallbacks( settings->bAllowExternalFunctionFallbacks );
 		if (settings->bAutoBindNativeFunctions)
+		{
+			// Nobody can have bound OnStoryError yet; hold binding errors until the first Continue.
+			UInkpotStory::FDeferStoryErrorsScope deferErrors( storyNew );
 			storyNew->BindRegisteredNativeFunctions( TArray<FString>(), false );
+		}
 
 		Stories.Emplace(handle, storyNew);
 
@@ -154,7 +158,10 @@ UInkpotStory* UInkpotStories::Reload( UInkpotStoryAsset* InInkpotStoryAsset )
 	story->SetProsettaProvenance( InInkpotStoryAsset->GetProsettaProvenance() );
 	// Reloaded content may call EXTERNALs the previous content did not; existing bindings are kept.
 	if (GetDefault<UInkpotSettings>()->bAutoBindNativeFunctions)
+	{
+		UInkpotStory::FDeferStoryErrorsScope deferErrors( story );
 		story->BindRegisteredNativeFunctions( TArray<FString>(), false );
+	}
 	return story;
 }
 
