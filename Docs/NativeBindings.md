@@ -218,7 +218,7 @@ volume index's `buildId`, so a logged error can be tied to an exact Prosetta bui
   ( `module_not_registered`, `function_missing`, `arity_mismatch`,
   `lookahead_mismatch`, `source_sha_mismatch`, `module_not_shipped`,
   `module_not_in_manifest`, `function_extra`, `external_unbound`,
-  `duplicate_function` ).
+  `duplicate_function`, and the info-only `local_module` ).
 - `AuditStory(Story, Manifest)` – adds the story's own unbound `EXTERNAL`s.
 
 Binding order: the first registered module ( sorted by name ) that implements an

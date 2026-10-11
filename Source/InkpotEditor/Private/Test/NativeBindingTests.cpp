@@ -323,6 +323,7 @@ bool FInkpotNativeBindingManifestTest::RunTest(const FString& InParameters)
 	TestEqual(TEXT("audit errors"), audit.ErrorCount, 0);
 	TestTrue(TEXT("audit passed"), audit.bPassed);
 	TestTrue(TEXT("unbound external reported as warning"), audit.Findings.ContainsByPredicate([](const FInkpotNativeBindingAuditFinding& F) { return F.Code == TEXT("external_unbound") && F.FunctionName == TEXT("unbound_external") && F.Severity == EInkpotNativeBindingAuditSeverity::Warning; }));
+	TestFalse(TEXT("module in the manifest is not reported as local"), audit.Findings.ContainsByPredicate([](const FInkpotNativeBindingAuditFinding& F) { return F.Code == TEXT("local_module") && F.ModuleName == TEXT("InkpotNativeTest"); }));
 
 	// Arity drift and a module that was never imported are errors.
 	FProsettaNativeBindingsManifest drifted;
