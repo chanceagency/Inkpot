@@ -18,10 +18,11 @@ namespace
 	{
 		UInkpotSettings* Settings;
 		EInkpotStoryErrorAction Error, Warning;
-		bool bMessageLog, bScreen, bProvenance;
+		bool bMessageLog, bScreen, bProvenance, bValidateBindings;
 		FScopedSettings()
 		: Settings(GetMutableDefault<UInkpotSettings>()), Error(Settings->StoryErrorAction), Warning(Settings->StoryWarningAction),
-		  bMessageLog(Settings->bStoryErrorsToMessageLog), bScreen(Settings->bStoryErrorsOnScreen), bProvenance(Settings->bIncludeProsettaProvenanceInLogs) {}
+		  bMessageLog(Settings->bStoryErrorsToMessageLog), bScreen(Settings->bStoryErrorsOnScreen), bProvenance(Settings->bIncludeProsettaProvenanceInLogs),
+		  bValidateBindings(Settings->bValidateExternalBindingsOnFirstContinue) {}
 		~FScopedSettings()
 		{
 			Settings->StoryErrorAction = Error;
@@ -29,6 +30,7 @@ namespace
 			Settings->bStoryErrorsToMessageLog = bMessageLog;
 			Settings->bStoryErrorsOnScreen = bScreen;
 			Settings->bIncludeProsettaProvenanceInLogs = bProvenance;
+			Settings->bValidateExternalBindingsOnFirstContinue = bValidateBindings;
 		}
 	};
 

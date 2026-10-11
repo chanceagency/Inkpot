@@ -144,25 +144,28 @@ bool FProsettaStoryProvenance::FromSyncManifest(const TSharedPtr<FJsonObject>& I
 	if (InManifest->TryGetArrayField(TEXT("artifacts"), artifacts))
 	{
 		const FString wanted = OutProvenance.VolumeSlug.IsEmpty() ? FString(TEXT("compiled-story")) : TEXT("compiled-story:") + OutProvenance.VolumeSlug;
-		FString fallback;
+		FString fallback, fallbackSlug;
 		int32 compiledCount = 0;
 		for (const TSharedPtr<FJsonValue>& value : *artifacts)
 		{
 			const TSharedPtr<FJsonObject>* artifact = nullptr;
 			if (!value->TryGetObject(artifact) || !artifact->IsValid()) continue;
 			const FString key = StringField(*artifact, TEXT("key"));
-			if (!key.StartsWith(TEXT("compiled-story"))) continue;
+			const bool bVolumeKey = key.StartsWith(TEXT("compiled-story:"));
+			if (key != TEXT("compiled-story") && !bVolumeKey) continue;
 			++compiledCount;
 			const FString checksum = StringField(*artifact, TEXT("checksum")).ToLower();
 			if (key == wanted) { OutProvenance.BuildId = checksum; break; }
 			fallback = checksum;
-			if (OutProvenance.VolumeSlug.IsEmpty() && key.StartsWith(TEXT("compiled-story:")))
-				OutProvenance.VolumeSlug = key.RightChop(15);
+			fallbackSlug = bVolumeKey ? key.RightChop(15) : FString();
 		}
+		// Only adopt an unmatched artifact (and its volume) when it is the sole compiled story.
 		if (OutProvenance.BuildId.IsEmpty() && compiledCount == 1)
+		{
 			OutProvenance.BuildId = fallback;
-		else if (OutProvenance.BuildId.IsEmpty())
-			OutProvenance.VolumeSlug = InVolumeSlug; // Ambiguous: do not claim a volume we did not match.
+			if (OutProvenance.VolumeSlug.IsEmpty())
+				OutProvenance.VolumeSlug = fallbackSlug;
+		}
 	}
 
 	if (InWatchEvent.IsValid())

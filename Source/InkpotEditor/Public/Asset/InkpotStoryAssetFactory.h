@@ -17,7 +17,7 @@ public:
 
 	// Preflight without touching an asset or invoking inklecate.
 	/** Provenance for a directly imported compiled story: wrapper metadata plus the sha256 build id. */
-	static FProsettaStoryProvenance CompiledProvenance(const FString& InFilename, const FString& InCompiledJSON);
+	static FProsettaStoryProvenance CompiledProvenance(const FString& InFilename);
 
 	static bool DecodeCompiledJSON(const FString& InJSON, FString& OutCompiledJSON, FString& OutError);
 	static bool ReadCompiledFiles(const FString& InFilename, const FString& InMetadataFilename, FString& OutCompiledJSON, FString& OutMetadataJSON, FString& OutError);
