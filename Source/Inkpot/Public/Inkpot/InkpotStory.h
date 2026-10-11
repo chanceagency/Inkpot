@@ -916,6 +916,24 @@ public:
 	void ReportStoryError( const FString &Message, EInkpotStoryErrorType ErrorType = EInkpotStoryErrorType::Error );
 
 	/**
+	 * FDeferStoryErrorsScope
+	 * While alive, ReportStoryError logs as usual but holds the OnStoryError broadcast and
+	 * any Ensure / Fatal escalation until the story's next Continue, ContinueMaximally or
+	 * ChoosePath. UInkpotStories uses it around the auto-bind in BeginStory and Reload,
+	 * where nothing can have subscribed to OnStoryError yet.
+	 */
+	struct INKPOT_API FDeferStoryErrorsScope
+	{
+		explicit FDeferStoryErrorsScope( UInkpotStory* InStory );
+		~FDeferStoryErrorsScope();
+	private:
+		UInkpotStory* Story;
+	};
+
+	/** Number of errors held by FDeferStoryErrorsScope and not yet broadcast. */
+	int32 GetPendingStoryErrorCount() const { return PendingStoryErrors.Num(); }
+
+	/**
 	 * SetProsettaProvenance / GetProsettaProvenance
 	 * Where the compiled story came from in Prosetta. Copied from the story asset when the
 	 * story begins; used as the prefix of this story's log messages when present.
@@ -1133,7 +1151,9 @@ protected:
 
 	void BindOnStoryErrorEvent();
 	void OnStoryErrorInternal(FString Message, Ink::EErrorType ErrorType);
-	void ApplyStoryErrorPolicy( const FString &Message, EInkpotStoryErrorType ErrorType );
+	void ApplyStoryErrorPolicy( const FString &Message, EInkpotStoryErrorType ErrorType, bool bInEscalate = true );
+	void EscalateStoryError( const FString &Message, EInkpotStoryErrorAction Action );
+	void FlushPendingStoryErrors();
 
 	// Marks this story as the one executing Ink, so VM exceptions can be attributed to it.
 	struct FActiveStoryScope
@@ -1160,6 +1180,16 @@ protected:
 
 	FOnInkpotStoryErrorNative EventOnStoryErrorNative;
 	bool bExternalBindingsValidated{ false };
+
+	// Errors reported inside an FDeferStoryErrorsScope, broadcast on the next Continue / ChoosePath.
+	struct FPendingStoryError
+	{
+		FString Message;
+		EInkpotStoryErrorType Type;
+		EInkpotStoryErrorAction Action;
+	};
+	TArray<FPendingStoryError> PendingStoryErrors;
+	int32 StoryErrorDeferralDepth{ 0 };
 
 	UPROPERTY(BlueprintAssignable, Category="Inkpot|Story", meta=(DisplayName="OnContinue") )
 	FOnStoryContinue EventOnContinue; 

@@ -120,6 +120,7 @@ void UInkpotStory::ChoosePathGT(FGameplayTag InPath )
 void UInkpotStory::ChoosePathInternal( const FString &InPath )
 {
 	FActiveStoryScope scope(this);
+	FlushPendingStoryErrors();
 	StoryInternal->ChoosePathString( InPath, true, TArray<TSharedPtr<Ink::FValueType>>() );
 }
 
@@ -197,6 +198,7 @@ void UInkpotStory::ChoosePathStringInternal( const FString& InPath, const TArray
 	if(!CreateInkValues( InValues, values ))
 		return;
 	FActiveStoryScope scope(this);
+	FlushPendingStoryErrors();
 	StoryInternal->ChoosePathString( InPath, true, values );
 }
 
@@ -226,6 +228,7 @@ FString UInkpotStory::ContinueInternal()
 		INKPOT_WARN("Continue ignored while a line is rendering for flow '%s'", *GetCurrentFlowName());
 		return GetCurrentText();
 	}
+	FlushPendingStoryErrors();
 	EnsureExternalBindingsValidated();
 	FActiveStoryScope scope(this);
 	return StoryInternal->Continue();
@@ -243,6 +246,7 @@ FString UInkpotStory::ContinueMaximallyInternal()
 		INKPOT_WARN("ContinueMaximally ignored while a line is rendering for flow '%s'", *GetCurrentFlowName());
 		return GetCurrentText();
 	}
+	FlushPendingStoryErrors();
 	EnsureExternalBindingsValidated();
 	FActiveStoryScope scope(this);
 	return StoryInternal->ContinueMaximally();
@@ -1292,13 +1296,50 @@ FString UInkpotStory::GetLogContext() const
 
 void UInkpotStory::ReportStoryError( const FString &InMessage, EInkpotStoryErrorType InErrorType )
 {
+	if (StoryErrorDeferralDepth > 0)
+	{
+		// Log now so the Output Log keeps its order; broadcast and escalate once someone can listen.
+		const UInkpotSettings* settings = GetDefault<UInkpotSettings>();
+		const EInkpotStoryErrorAction action = InErrorType == EInkpotStoryErrorType::Error ? settings->StoryErrorAction : settings->StoryWarningAction;
+		ApplyStoryErrorPolicy( InMessage, InErrorType, false );
+		PendingStoryErrors.Add( { InMessage, InErrorType, action } );
+		return;
+	}
 	EventOnStoryErrorNative.Broadcast( this, InMessage, InErrorType );
 	if (EventOnStoryError.IsBound())
 		EventOnStoryError.Broadcast( this, InMessage, InErrorType );
 	ApplyStoryErrorPolicy( InMessage, InErrorType );
 }
 
-void UInkpotStory::ApplyStoryErrorPolicy( const FString &InMessage, EInkpotStoryErrorType InErrorType )
+void UInkpotStory::FlushPendingStoryErrors()
+{
+	if (StoryErrorDeferralDepth > 0 || PendingStoryErrors.Num() == 0)
+		return;
+	TArray<FPendingStoryError> pending = MoveTemp( PendingStoryErrors );
+	PendingStoryErrors.Reset();
+	for (const FPendingStoryError& error : pending)
+	{
+		EventOnStoryErrorNative.Broadcast( this, error.Message, error.Type );
+		if (EventOnStoryError.IsBound())
+			EventOnStoryError.Broadcast( this, error.Message, error.Type );
+		EscalateStoryError( error.Message, error.Action );
+	}
+}
+
+UInkpotStory::FDeferStoryErrorsScope::FDeferStoryErrorsScope( UInkpotStory* InStory )
+: Story( InStory )
+{
+	if (Story)
+		++Story->StoryErrorDeferralDepth;
+}
+
+UInkpotStory::FDeferStoryErrorsScope::~FDeferStoryErrorsScope()
+{
+	if (Story)
+		--Story->StoryErrorDeferralDepth;
+}
+
+void UInkpotStory::ApplyStoryErrorPolicy( const FString &InMessage, EInkpotStoryErrorType InErrorType, bool bInEscalate )
 {
 	const UInkpotSettings* settings = GetDefault<UInkpotSettings>();
 	const bool bError = InErrorType == EInkpotStoryErrorType::Error;
@@ -1328,11 +1369,20 @@ void UInkpotStory::ApplyStoryErrorPolicy( const FString &InMessage, EInkpotStory
 	if (settings->bStoryErrorsOnScreen && GEngine)
 		GEngine->AddOnScreenDebugMessage( INDEX_NONE, settings->StoryErrorOnScreenSeconds, bError ? FColor::Red : FColor::Yellow, message );
 
-	if (action == EInkpotStoryErrorAction::Ensure)
+	if (bInEscalate)
+		EscalateStoryError( InMessage, action );
+}
+
+void UInkpotStory::EscalateStoryError( const FString &InMessage, EInkpotStoryErrorAction InAction )
+{
+	if (InAction != EInkpotStoryErrorAction::Ensure && InAction != EInkpotStoryErrorAction::Fatal)
+		return;
+	const FString message = FString::Printf( TEXT("[Inkpot %s] %s"), *GetLogContext(), *InMessage );
+	if (InAction == EInkpotStoryErrorAction::Ensure)
 	{
 		ensureAlwaysMsgf( false, TEXT("%s"), *message );
 	}
-	else if (action == EInkpotStoryErrorAction::Fatal)
+	else
 	{
 		UE_LOG( Inkpot, Fatal, TEXT("%s"), *message );
 	}
