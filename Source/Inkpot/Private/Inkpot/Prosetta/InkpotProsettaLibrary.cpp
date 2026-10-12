@@ -178,9 +178,11 @@ FProsettaParseResult UInkpotProsettaLibrary::ParseFragmentResolved(const FString
 			nextCursor = afterClose;
 		}
 
-		// resolve the display text: prefer an authoritative replacement, else inner text
+		// resolve the display text: prefer an authoritative replacement, else inner text.
+		// The resolver receives the runtime inner text so it can recover inline values.
 		FString displayText = innerText;
 		InResolver(segment.LineId, displayText);
+		segment.RuntimeText = MoveTemp(innerText);
 
 		segment.StartOffset = clean.Len();
 		segment.Text = displayText;

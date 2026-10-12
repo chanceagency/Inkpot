@@ -21,6 +21,9 @@
 
 namespace
 {
+ // Prosetta Sync CLI 0.10.0 is the first release with the native watch command.
+ constexpr int32 MinimumCLIVersion[3] = { 0, 10, 0 };
+ const TCHAR* MinimumCLIVersionText = TEXT("0.10.0");
  FString Hash(const FString& Value)
  {
   FTCHARToUTF8 utf8(*Value);
@@ -110,18 +113,75 @@ void UProsettaWatchSubsystem::Deinitialize()
  Super::Deinitialize();
 }
 
-bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FString& ConfigFile, const FString& AudioDecoder)
+bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FString& ConfigFile, const FString& AudioDecoder, const FString& Channel, const FString& Volumes, bool bMirror)
 {
  StopWatch();
- if (FPaths::IsRelative(CLIExecutable) || FPaths::IsRelative(ConfigFile) || !FPaths::FileExists(CLIExecutable) || !FPaths::FileExists(ConfigFile) || ConfigFile.Contains(TEXT("\"")))
+ if (FPaths::IsRelative(CLIExecutable) || FPaths::IsRelative(ConfigFile) || !FPaths::FileExists(CLIExecutable) || !FPaths::FileExists(ConfigFile))
  { Status = TEXT("Watch requires absolute CLI and configuration file paths."); return false; }
+ FString arguments, error;
+ if (!BuildWatchArguments(ConfigFile, Channel, Volumes, bMirror, arguments, error)) { Status = error; return false; }
+ int32 versionExit = -1;
+ FString version, versionError;
+ FPlatformProcess::ExecProcess(*CLIExecutable, TEXT("--version"), &versionExit, &version, &versionError);
+ if (versionExit != 0 || !IsSupportedCLIVersion(version))
+ {
+  Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.TrimStartAndEnd().Left(64));
+  return false;
+ }
  Decoder = AudioDecoder;
  FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
- const FString arguments = FString::Printf(TEXT("watch --json --config \"%s\""), *ConfigFile);
  Process = FPlatformProcess::CreateProc(*CLIExecutable, *arguments, false, true, true, nullptr, 0, nullptr, WritePipe);
  if (!Process.IsValid()) { StopWatch(); Status = TEXT("Unable to launch CLI watch."); return false; }
- Status = TEXT("Watching; waiting for a complete generation.");
+ Status = FString::Printf(TEXT("Watching %s (CLI %s); waiting for a complete generation."), *Channel, *version.TrimStartAndEnd());
  return true;
+}
+bool UProsettaWatchSubsystem::BuildWatchArguments(const FString& ConfigFile, const FString& Channel, const FString& Volumes, bool bMirror, FString& OutArguments, FString& OutError)
+{
+ // Mirrors the CLI's own usage checks ( exit code 2 ) so mistakes surface before launch.
+ if (ConfigFile.Contains(TEXT("\"")) || ConfigFile.Contains(TEXT("\n")) || ConfigFile.Contains(TEXT("\r")))
+ { OutError = TEXT("Watch configuration path contains unsupported characters."); return false; }
+ const bool bLive = Channel.Equals(TEXT("live"), ESearchCase::CaseSensitive);
+ const bool bLatestRelease = Channel.Equals(TEXT("latest-release"), ESearchCase::CaseSensitive);
+ if (!bLive && !bLatestRelease)
+ { OutError = TEXT("Watch channel must be live or latest-release."); return false; }
+ TArray<FString> volumes;
+ if (!Volumes.IsEmpty()) Volumes.ParseIntoArray(volumes, TEXT(","), false);
+ for (const FString& volume : volumes)
+ {
+  int32 at = INDEX_NONE;
+  const FString slug = volume.FindChar(TEXT('@'), at) ? volume.Left(at) : volume;
+  if (at != INDEX_NONE && !volume.Mid(at).Equals(TEXT("@latest"), ESearchCase::CaseSensitive)) { OutError = TEXT("Fixed tags use one-shot sync, not watch."); return false; }
+  bool bValid = !slug.IsEmpty();
+  for (const TCHAR c : slug) bValid &= FChar::IsAlnum(c) || c == TEXT('-') || c == TEXT('_');
+  if (!bValid) { OutError = FString::Printf(TEXT("Invalid watch volume '%s'."), *volume.Left(64)); return false; }
+ }
+ if (bLatestRelease && volumes.Num() > 1)
+ { OutError = TEXT("Watch each latest-release volume with its own cache."); return false; }
+ OutArguments = FString::Printf(TEXT("watch --json --config \"%s\" --channel %s"), *ConfigFile, *Channel);
+ if (!Volumes.IsEmpty()) OutArguments += TEXT(" --volumes ") + Volumes;
+ if (!bMirror) OutArguments += TEXT(" --no-mirror");
+ return true;
+}
+bool UProsettaWatchSubsystem::IsSupportedCLIVersion(const FString& VersionOutput)
+{
+ FString line = VersionOutput.TrimStartAndEnd();
+ int32 end = INDEX_NONE;
+ if (line.FindChar(TEXT('\n'), end)) line.LeftInline(end);
+ line.RemoveFromStart(TEXT("v"));
+ FString core = line, prerelease;
+ if (line.FindChar(TEXT('+'), end)) core.LeftInline(end);
+ if (core.FindChar(TEXT('-'), end)) { prerelease = core.Mid(end + 1); core.LeftInline(end); }
+ TArray<FString> parts;
+ core.TrimStartAndEnd().ParseIntoArray(parts, TEXT("."), false);
+ if (parts.Num() != 3) return false;
+ for (int32 i = 0; i < 3; ++i)
+ {
+  if (parts[i].IsEmpty() || !parts[i].IsNumeric() || parts[i].Contains(TEXT("."))) return false;
+  const int32 value = FCString::Atoi(*parts[i]);
+  if (value != MinimumCLIVersion[i]) return value > MinimumCLIVersion[i];
+ }
+ // A prerelease of the minimum ( 0.10.0-rc.1 ) predates the release that shipped watch.
+ return prerelease.IsEmpty();
 }
 void UProsettaWatchSubsystem::StopWatch()
 {
@@ -129,22 +189,43 @@ void UProsettaWatchSubsystem::StopWatch()
  FPlatformProcess::ClosePipe(ReadPipe, WritePipe);
  ReadPipe = WritePipe = nullptr;
  Buffer.Empty();
+ LastDiagnostic.Empty();
  Status = TEXT("Stopped; queued generations retained.");
+}
+void UProsettaWatchSubsystem::ConsumeOutput(bool bFlush)
+{
+ Buffer += FPlatformProcess::ReadPipe(ReadPipe);
+ if (bFlush && !Buffer.IsEmpty() && !Buffer.EndsWith(TEXT("\n"))) Buffer += TEXT('\n');
+ int32 newline;
+ while (Buffer.FindChar(TEXT('\n'), newline))
+ {
+  const FString line = Buffer.Left(newline).TrimStartAndEnd();
+  Buffer.RightChopInline(newline + 1);
+  if (line.IsEmpty()) continue;
+  // stderr shares the pipe: usage errors and fatal messages are plain text, not NDJSON.
+  if (line.StartsWith(TEXT("{"))) ConsumeEvent(line);
+  else if (!line.StartsWith(TEXT("Run prosetta-sync --help"))) LastDiagnostic = line.Left(512);
+ }
+ if (Buffer.Len() > 4 * 1024 * 1024) { Buffer.Empty(); Status = TEXT("Rejected oversized sidecar event."); }
 }
 bool UProsettaWatchSubsystem::Tick(float DeltaTime)
 {
  if (ReadPipe)
  {
-  Buffer += FPlatformProcess::ReadPipe(ReadPipe);
-  int32 newline;
-  while (Buffer.FindChar(TEXT('\n'), newline))
+  const bool bExited = Process.IsValid() && !FPlatformProcess::IsProcRunning(Process);
+  // Drain after observing the exit so the final lines are never lost.
+  ConsumeOutput(bExited);
+  if (bExited)
   {
-   const FString line = Buffer.Left(newline).TrimStartAndEnd();
-   Buffer.RightChopInline(newline + 1);
-   if (!line.IsEmpty()) ConsumeEvent(line);
+   int32 exitCode = -1;
+   FPlatformProcess::GetProcReturnCode(Process, &exitCode);
+   const FString diagnostic = LastDiagnostic.IsEmpty() ? FString() : TEXT(": ") + LastDiagnostic;
+   const FString prior = Status;
+   StopWatch();
+   if (exitCode == 2) Status = TEXT("CLI rejected the watch arguments") + diagnostic;
+   else if (exitCode != 0 && prior.StartsWith(TEXT("CLI error: "))) Status = prior;
+   else Status = FString::Printf(TEXT("CLI exited with code %d%s; last imported assets retained."), exitCode, *diagnostic);
   }
-  if (Buffer.Len() > 4 * 1024 * 1024) { Buffer.Empty(); Status = TEXT("Rejected oversized sidecar event."); }
-  if (Process.IsValid() && !FPlatformProcess::IsProcRunning(Process)) { StopWatch(); Status = TEXT("CLI exited; last imported assets retained."); }
  }
  TryApplyPending();
  return true;
@@ -158,11 +239,28 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
  TSharedPtr<FJsonObject> event;
  FString type, name;
  int32 version;
- if (!Parse(EventJSON, event) || !event->TryGetNumberField(TEXT("schemaVersion"), version) || version != 1 || !event->TryGetStringField(TEXT("type"), type))
+ if (!Parse(EventJSON, event)) { Status = TEXT("Rejected malformed CLI event."); return false; }
+ // A fatal CLI error under --json is a one-off sync result, not an NDJSON event.
+ FString result, message;
+ if (!event->HasField(TEXT("schemaVersion")) && event->TryGetStringField(TEXT("status"), result) && result == TEXT("error"))
+ {
+  event->TryGetStringField(TEXT("error"), message);
+  Status = TEXT("CLI error: ") + message.Left(512);
+  return true;
+ }
+ if (!event->TryGetNumberField(TEXT("schemaVersion"), version) || version != 1 || !event->TryGetStringField(TEXT("type"), type))
  { Status = TEXT("Rejected malformed CLI event."); return false; }
  if (type != TEXT("generation-completed"))
  {
-  Status = type == TEXT("blocked") ? TEXT("Watch blocked; last assets retained.") : TEXT("Watch transport status: ") + type;
+  FString code, scope;
+  event->TryGetStringField(TEXT("code"), code);
+  event->TryGetStringField(TEXT("scope"), scope);
+  const FString detail = (code.IsEmpty() ? FString() : TEXT(" ") + code.Left(64)) + (scope.IsEmpty() ? FString() : TEXT(" for ") + scope.Left(128));
+  if (type == TEXT("blocked")) Status = TEXT("Watch blocked") + detail + TEXT("; last assets retained.");
+  else if (code == TEXT("STREAM_RECONNECTING")) Status = TEXT("Watch reconnecting to Prosetta; last assets retained.");
+  else if (code == TEXT("GENERATION_RETRY")) Status = TEXT("Generation failed; CLI will retry") + detail + TEXT(".");
+  else if (type == TEXT("error")) Status = TEXT("Watch error") + detail + TEXT("; last assets retained.");
+  else Status = TEXT("Watch transport status: ") + type.Left(64) + detail;
   return true;
  }
  if (!EventNamespace(event, name)) { Status = TEXT("Rejected invalid completed generation identity."); return false; }

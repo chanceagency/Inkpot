@@ -3,6 +3,7 @@
 #include "Inkpot/Prosetta/InkpotProsettaLibrary.h"
 #include "Inkpot/Prosetta/ProsettaLine.h"
 #include "Inkpot/Prosetta/ProsettaMetadata.h"
+#include "Inkpot/Prosetta/ProsettaInlineTemplate.h"
 
 UInkpotLine::UInkpotLine()
 {
@@ -14,13 +15,38 @@ void UInkpotLine::Initialise(const FString &InString)
 
 	// Scan the fragment for <prosetta> tags, hydrating each into a UProsettaLine and
 	// producing clean, player-facing text with the markup removed. When line metadata
-	// is available we prefer the authoritative string for each identified segment.
+	// is available we prefer the authoritative string for each identified segment, with
+	// its inline Ink {expressions} filled from the text the runtime emitted.
 	UInkpotStory* story = GetStory();
 	UProsettaMetadata* metadata = story ? story->GetProsettaMetadata() : nullptr;
 
-	auto resolver = [metadata](FName InLineId, FString& OutText) -> bool
+	// Values recovered while resolving, handed on to the matching segment below.
+	struct FResolvedValues
 	{
-		return metadata ? metadata->ResolveText(InLineId, OutText) : false;
+		FName LineId;
+		FString RuntimeText;
+		FProsettaTemplateValues Values;
+	};
+	TArray<FResolvedValues, TInlineAllocator<4>> resolvedValues;
+
+	auto variableResolver = [story](FStringView InName, FString& OutValue) -> bool
+	{
+		return FProsettaInlineTemplate::ResolveStoryVariable(story, InName, OutValue);
+	};
+
+	auto resolver = [metadata, &variableResolver, &resolvedValues](FName InLineId, FString& InOutText) -> bool
+	{
+		if (!metadata)
+			return false;
+
+		FProsettaTemplateValues values;
+		FString display;
+		const bool bResolved = metadata->ResolveDisplayText(InLineId, InOutText, variableResolver, display, values);
+		if (!values.IsEmpty())
+			resolvedValues.Add({ InLineId, InOutText, MoveTemp(values) });
+		if (bResolved)
+			InOutText = MoveTemp(display);
+		return bResolved;
 	};
 
 	const FProsettaParseResult parsed = UInkpotProsettaLibrary::ParseFragmentResolved(InString, resolver);
@@ -36,6 +62,18 @@ void UInkpotLine::Initialise(const FString &InString)
 		FProsettaLineMetadata lineMetadata;
 		const bool bResolved = metadata && metadata->Resolve(segment.LineId, lineMetadata);
 		line->SetMetadata(lineMetadata, bResolved);
+
+		FProsettaTemplateValues values;
+		const int32 valuesIndex = resolvedValues.IndexOfByPredicate([&segment](const FResolvedValues& InResolved)
+		{
+			return InResolved.LineId == segment.LineId && InResolved.RuntimeText == segment.RuntimeText;
+		});
+		if (valuesIndex != INDEX_NONE)
+		{
+			values = MoveTemp(resolvedValues[valuesIndex].Values);
+			resolvedValues.RemoveAt(valuesIndex, EAllowShrinking::No);
+		}
+		line->SetRuntimeText(segment.RuntimeText, MoveTemp(values));
 
 		ProsettaSegments.Add(line);
 	}

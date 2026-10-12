@@ -21,7 +21,8 @@ class INKPOT_API UInkpotProsettaLibrary : public UBlueprintFunctionLibrary
 
 public:
 	/** A resolver decides the display text for a given line id, returning true if it
-	 *  supplied an authoritative replacement for the tag's inner text. */
+	 *  supplied an authoritative replacement for the tag's inner text. On entry OutText
+	 *  holds the tag's runtime inner text ( Ink expressions already evaluated ). */
 	using FTextResolver = TFunctionRef<bool(FName /*LineId*/, FString& /*OutText*/)>;
 
 	/**

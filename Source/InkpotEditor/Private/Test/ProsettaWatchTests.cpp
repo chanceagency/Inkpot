@@ -310,6 +310,65 @@ bool FProsettaWatchPersistenceTest::RunTest(const FString& InParameters)
 
  return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchCLITest, "Inkpot.Prosetta.WatchCLI",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchCLITest::RunTest(const FString& InParameters)
+{
+ // Version gate: watch shipped in Prosetta Sync CLI 0.10.0.
+ TestTrue(TEXT("0.10.0 supported"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.10.0\n")));
+ TestTrue(TEXT("build metadata ignored"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.10.0+93b8cf038")));
+ TestTrue(TEXT("v prefix tolerated"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("v0.10.1")));
+ TestTrue(TEXT("newer minor supported"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.11.0")));
+ TestTrue(TEXT("newer major supported"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("1.0.0")));
+ TestTrue(TEXT("numeric not lexical compare"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.100.0")));
+ TestFalse(TEXT("0.9.0 rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.9.0")));
+ TestFalse(TEXT("0.9.12 rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.9.12")));
+ TestFalse(TEXT("0.10.0 prerelease rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.10.0-rc.1")));
+ TestTrue(TEXT("later prerelease supported"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.11.0-rc.1")));
+ TestFalse(TEXT("empty rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("")));
+ TestFalse(TEXT("garbage rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("Unknown command 'version'.")));
+ TestFalse(TEXT("two-part rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.10")));
+
+ // Arguments mirror the CLI's usage checks ( which otherwise exit with code 2 ).
+ FString arguments, error;
+ TestTrue(TEXT("default live watch"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("live"), TEXT(""), true, arguments, error));
+ TestEqual(TEXT("default arguments"), arguments, FString(TEXT("watch --json --config \"/cfg/config.json\" --channel live")));
+ TestTrue(TEXT("scoped release watch"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("latest-release"), TEXT("core"), false, arguments, error));
+ TestEqual(TEXT("scoped arguments"), arguments, FString(TEXT("watch --json --config \"/cfg/config.json\" --channel latest-release --volumes core --no-mirror")));
+ TestTrue(TEXT("multi-volume live watch"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("live"), TEXT("core,side@latest"), true, arguments, error));
+ TestTrue(TEXT("multi-volume arguments"), arguments.EndsWith(TEXT("--volumes core,side@latest")));
+ TestFalse(TEXT("unknown channel"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("nightly"), TEXT(""), true, arguments, error));
+ TestTrue(TEXT("unknown channel explained"), error.Contains(TEXT("live or latest-release")));
+ TestFalse(TEXT("channel is case sensitive"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("LIVE"), TEXT(""), true, arguments, error));
+ TestFalse(TEXT("fixed tag rejected"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("live"), TEXT("core@1.0"), true, arguments, error));
+ TestTrue(TEXT("fixed tag explained"), error.Contains(TEXT("sync")));
+ TestFalse(TEXT("multiple release volumes rejected"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("latest-release"), TEXT("core,side"), true, arguments, error));
+ TestFalse(TEXT("empty volume rejected"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("live"), TEXT("core,,side"), true, arguments, error));
+ TestFalse(TEXT("argument injection rejected"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("live"), TEXT("core --token x"), true, arguments, error));
+ TestFalse(TEXT("quoted config rejected"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/\"x\".json"), TEXT("live"), TEXT(""), true, arguments, error));
+
+ // Non-import events surface their code and never queue.
+ UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
+ if (!TestNotNull(TEXT("watch subsystem"), watch)) return false;
+ const int32 pending = watch->GetPendingCount();
+ TestTrue(TEXT("reconnect accepted"), watch->ConsumeEvent(TEXT("{\"schemaVersion\":1,\"type\":\"error\",\"projectId\":7,\"channel\":\"live\",\"code\":\"STREAM_RECONNECTING\"}")));
+ TestTrue(TEXT("reconnect status"), watch->GetStatus().Contains(TEXT("reconnecting")));
+ TestTrue(TEXT("REST error accepted"), watch->ConsumeEvent(TEXT("{\"schemaVersion\":1,\"type\":\"error\",\"projectId\":7,\"channel\":\"live\",\"scope\":\"project\",\"code\":\"REST_401\"}")));
+ TestTrue(TEXT("REST code surfaced"), watch->GetStatus().Contains(TEXT("REST_401")) && watch->GetStatus().Contains(TEXT("project")));
+ TestTrue(TEXT("retry accepted"), watch->ConsumeEvent(TEXT("{\"schemaVersion\":1,\"type\":\"error\",\"projectId\":7,\"channel\":\"live\",\"code\":\"GENERATION_RETRY\"}")));
+ TestTrue(TEXT("retry status"), watch->GetStatus().Contains(TEXT("retry")));
+ TestTrue(TEXT("blocked accepted"), watch->ConsumeEvent(TEXT("{\"schemaVersion\":1,\"type\":\"blocked\",\"projectId\":7,\"channel\":\"latest-release\",\"scope\":\"core\",\"code\":\"REST_409\"}")));
+ TestTrue(TEXT("blocked code surfaced"), watch->GetStatus().StartsWith(TEXT("Watch blocked REST_409 for core")));
+ TestTrue(TEXT("status accepted"), watch->ConsumeEvent(TEXT("{\"schemaVersion\":1,\"type\":\"status\",\"code\":\"CONNECTED\"}")));
+ TestTrue(TEXT("status surfaced"), watch->GetStatus().Contains(TEXT("CONNECTED")));
+ TestTrue(TEXT("fatal JSON result accepted"), watch->ConsumeEvent(TEXT("{\"status\":\"error\",\"error\":\"Project token missing.\"}")));
+ TestEqual(TEXT("fatal JSON result surfaced"), watch->GetStatus(), FString(TEXT("CLI error: Project token missing.")));
+ TestFalse(TEXT("future schema rejected"), watch->ConsumeEvent(TEXT("{\"schemaVersion\":2,\"type\":\"generation-completed\"}")));
+ TestFalse(TEXT("non-JSON rejected"), watch->ConsumeEvent(TEXT("not json")));
+ TestEqual(TEXT("nothing queued"), watch->GetPendingCount(), pending);
+ return true;
+}
 #if PLATFORM_MAC || PLATFORM_LINUX
 class FProsettaSidecarCommand : public IAutomationLatentCommand
 {
@@ -328,6 +387,10 @@ public:
    UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
    Test->TestTrue(TEXT("sidecar generation imported exact compiled story"), story && story->GetCompiledJSON().Contains(TEXT("Generation 9")));
   }
+  FString arguments;
+  FFileHelper::LoadFileToString(arguments, *(Fixture.Root / TEXT("args.txt")));
+  Test->TestTrue(TEXT("CLI launched with native watch arguments"), arguments.StartsWith(TEXT("watch --json --config ")) && arguments.Contains(TEXT("--channel live")));
+  Test->TestFalse(TEXT("default watch mirrors"), arguments.Contains(TEXT("--no-mirror")));
   Watch->StopWatch();
   return true;
  }
@@ -349,7 +412,9 @@ bool FProsettaSidecarTest::RunTest(const FString& InParameters)
  const FString config = fixture.Root / TEXT("config.json");
  FFileHelper::SaveStringToFile(fixture.Event + TEXT("\n"), *eventPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
  FFileHelper::SaveStringToFile(TEXT("{}"), *config);
- const FString script = TEXT("#!/bin/sh\ncat \"") + eventPath + TEXT("\"\nsleep 30\n");
+ const FString argsPath = fixture.Root / TEXT("args.txt");
+ const FString script = TEXT("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\nprintf '%s\\n' \"$*\" > \"") + argsPath +
+  TEXT("\"\ncat \"") + eventPath + TEXT("\"\nsleep 30\n");
  FFileHelper::SaveStringToFile(script, *executable, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
  int32 chmodExit = -1;
  FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + executable + TEXT("\"")), &chmodExit, nullptr, nullptr);
@@ -357,6 +422,66 @@ bool FProsettaSidecarTest::RunTest(const FString& InParameters)
  if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
  if (!TestTrue(TEXT("real sidecar process launches"), watch->StartWatch(executable, config, TEXT("")))) return false;
  AddCommand(new FProsettaSidecarCommand(this, watch, fixture));
+ return true;
+}
+
+class FProsettaSidecarExitCommand : public IAutomationLatentCommand
+{
+public:
+ FProsettaSidecarExitCommand(FAutomationTestBase* InTest, UProsettaWatchSubsystem* InWatch, const FString& InExpected)
+  : Test(InTest), Watch(InWatch), Expected(InExpected), Started(FPlatformTime::Seconds()) {}
+ virtual bool Update() override
+ {
+  if (!Watch->GetStatus().StartsWith(TEXT("CLI ")) && FPlatformTime::Seconds() - Started < 10) return false;
+  Test->AddInfo(TEXT("Sidecar status: ") + Watch->GetStatus());
+  Test->TestTrue(TEXT("CLI exit surfaced with its diagnostic"), Watch->GetStatus().Contains(Expected));
+  Watch->StopWatch();
+  return true;
+ }
+private:
+ FAutomationTestBase* Test;
+ UProsettaWatchSubsystem* Watch;
+ FString Expected;
+ double Started;
+};
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarExitTest, "Inkpot.Prosetta.WatchSidecarExit",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaSidecarExitTest::RunTest(const FString& InParameters)
+{
+ const FString root = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("ProsettaWatchTests") / (TEXT("exit-") + FGuid::NewGuid().ToString()));
+ IFileManager::Get().MakeDirectory(*root, true);
+ const FString config = root / TEXT("config.json");
+ FFileHelper::SaveStringToFile(TEXT("{}"), *config);
+ const auto WriteScript = [&root](const FString& Name, const FString& Body)
+ {
+  const FString path = root / Name;
+  FFileHelper::SaveStringToFile(TEXT("#!/bin/sh\n") + Body, *path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+  int32 chmodExit = -1;
+  FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + path + TEXT("\"")), &chmodExit, nullptr, nullptr);
+  return path;
+ };
+ UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
+ if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
+
+ // A pre-watch CLI is refused before it is ever launched with `watch`.
+ const FString old = WriteScript(TEXT("old-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.9.0; exit 0; fi\ntouch \"") + root + TEXT("/launched\"\n"));
+ TestFalse(TEXT("0.9.0 CLI refused"), watch->StartWatch(old, config, TEXT("")));
+ TestTrue(TEXT("version requirement explained"), watch->GetStatus().Contains(TEXT("0.10.0")) && watch->GetStatus().Contains(TEXT("0.9.0")));
+ TestFalse(TEXT("old CLI never ran watch"), FPaths::FileExists(root / TEXT("launched")));
+
+ // Plugin-side usage checks fail fast without launching.
+ TestFalse(TEXT("fixed tag refused"), watch->StartWatch(old, config, TEXT(""), TEXT("live"), TEXT("core@1.0")));
+ TestTrue(TEXT("fixed tag explained"), watch->GetStatus().Contains(TEXT("one-shot sync")));
+
+ // A CLI usage error ( exit 2, stderr ) is reported once the process exits; NDJSON before it still counts.
+ const FString rejecting = WriteScript(TEXT("rejecting-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\n")
+  TEXT("echo '{\"schemaVersion\":1,\"type\":\"error\",\"projectId\":1,\"channel\":\"live\",\"code\":\"STREAM_RECONNECTING\"}'\n")
+  TEXT("echo 'Watch each latest-release volume with its own cache.' >&2\necho 'Run prosetta-sync --help for usage.' >&2\nexit 2\n"));
+ if (!TestTrue(TEXT("0.10.0 CLI launches"), watch->StartWatch(rejecting, config, TEXT(""), TEXT("latest-release"), TEXT("core"), false))) return false;
+ TestTrue(TEXT("launch status names channel and version"), watch->GetStatus().Contains(TEXT("latest-release")) && watch->GetStatus().Contains(TEXT("0.10.0")));
+ AddCommand(new FProsettaSidecarExitCommand(this, watch, TEXT("CLI rejected the watch arguments: Watch each latest-release volume with its own cache.")));
  return true;
 }
 #endif
