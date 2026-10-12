@@ -97,3 +97,90 @@ struct INKPOT_API FProsettaParseResult
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
 	bool bHasTags = false;
 };
+
+/**
+ * FProsettaStoryProvenance
+ * Where a compiled story came from in Prosetta: project, sync channel / scope, volume,
+ * generation and revision, release tag and the compiled story's content hash. Set on the
+ * UInkpotStoryAsset by the Prosetta watch import, by the compiled JSON importer, or by
+ * game code that builds assets from a sync mirror; copied to the UInkpotStory when it
+ * begins and prefixed to Inkpot's story logs so an error can be traced to an exact build.
+ * Every field is optional; ToLogString includes only the ones that are present.
+ */
+USTRUCT(BlueprintType)
+struct INKPOT_API FProsettaStoryProvenance
+{
+	GENERATED_BODY()
+
+	/** Prosetta project id ( 0 when unknown ). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	int32 ProjectId = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString ProjectIdentifier;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString ProjectName;
+
+	/** Sync channel: live or latest-release. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString Channel;
+
+	/** Canonical scope string of the sync ( e.g. the volume selector ). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString Scope;
+
+	/** Volume slug this story was compiled from, when the sync was volume scoped. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString VolumeSlug;
+
+	/** Release tag selected for the volume, when any. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString VolumeTag;
+
+	/** Watch namespace the asset was imported under ( Project<id>/<Live|Release>_<scope-hash> ). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString Namespace;
+
+	/** Immutable generation id ( sha256 hex ) of the CLI generation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString GenerationId;
+
+	/** Project revision captured by the generation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString Revision;
+
+	/** Release tag id, for latest-release syncs. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString ReleaseTagId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString ReleasePublishedAt;
+
+	/** sha256 hex of the compiled story artifact bytes ( the volume index's buildId ). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString BuildId;
+
+	/** When the sync manifest or compiled payload was generated. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Inkpot|Prosetta")
+	FString GeneratedAt;
+
+	/** True when any identifying field is present. */
+	bool IsSet() const;
+
+	/** Compact one-line form for log prefixes, e.g. "Prosetta project 42 live core@17 gen 9f3c1a2b build 77aa01b2". */
+	FString ToLogString() const;
+
+	/**
+	 * Reads provenance from an Engine Sync v2 manifest document ( the CLI's manifest.json
+	 * in a sync mirror or a completed generation ) and, optionally, the watch event that
+	 * delivered it. InVolumeSlug selects the compiled story artifact in a multi-volume
+	 * manifest; empty picks the single compiled-story artifact when there is one.
+	 */
+	static bool FromSyncManifest(const TSharedPtr<class FJsonObject>& InManifest, const TSharedPtr<class FJsonObject>& InWatchEvent, const FString& InVolumeSlug, FProsettaStoryProvenance& OutProvenance);
+	static bool FromSyncManifestJSON(const FString& InManifestJSON, const FString& InVolumeSlug, FProsettaStoryProvenance& OutProvenance);
+	static bool FromSyncManifestFile(const FString& InManifestFilename, const FString& InVolumeSlug, FProsettaStoryProvenance& OutProvenance);
+
+	/** Reads projectName / compiledAt from a /compiled payload wrapper ( {"projectName","compiledAt","story"} ). */
+	static bool FromCompiledWrapper(const FString& InWrapperJSON, FProsettaStoryProvenance& OutProvenance);
+};

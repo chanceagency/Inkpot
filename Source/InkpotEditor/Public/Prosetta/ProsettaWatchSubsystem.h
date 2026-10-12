@@ -30,7 +30,8 @@ public:
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool ConsumeEvent(const FString& EventJSON);
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool TryApplyPending();
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") int32 CleanupRetiredAssets(const FString& Namespace);
- UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool ImportNativeSources(const FString& Namespace, const FString& Destination);
+ /** Copies staged native-bindings/cpp sources to Destination after checksum verification; optionally validates them against the generation manifest and writes <Module>.Bindings.cpp loaders. */
+ UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool ImportNativeSources(const FString& Namespace, const FString& Destination, bool bGenerateLoaders = false);
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") FString GetStatus() const { return Status; }
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") int32 GetPendingCount() const { return Pending.Num(); }
  static bool IsSafeToApply();

@@ -1,4 +1,5 @@
 #include "Asset/InkpotStoryAssetFactory.h"
+#include "Prosetta/ProsettaChecksum.h"
 #include "Asset/InkpotStoryAsset.h"
 #include "Misc/FileHelper.h"
 #include "Compiler/InkCompiler.h"
@@ -77,6 +78,7 @@ UObject* UInkpotStoryAssetFactory::FactoryCreateFile(UClass* InClass, UObject* I
 			newAsset = NewObject<UInkpotStoryAsset>(InParent, InClass, InName, InFlags);
 			newAsset->SetCompiledJSON(compiled);
 			newAsset->SetProsettaJSON(metadata);
+			newAsset->SetProsettaProvenance(CompiledProvenance(InFullFilePath));
 			newAsset->UpdateAssetInfo(InFullFilePath);
 		}
 		else if (InWarn)
@@ -206,6 +208,22 @@ int32 UInkpotStoryAssetFactory::GetPriority() const
 	return ImportPriority;
 }
 
+FProsettaStoryProvenance UInkpotStoryAssetFactory::CompiledProvenance(const FString& InFilename)
+{
+	// Project name / compile time come from the Prosetta wrapper when the file has one;
+	// the build id is the sha256 of the file bytes, which is what the sync manifest checksum covers.
+	FProsettaStoryProvenance provenance;
+	TArray<uint8> bytes;
+	if (FFileHelper::LoadFileToArray(bytes, *InFilename))
+	{
+		FString raw;
+		FFileHelper::BufferToString(raw, bytes.GetData(), bytes.Num());
+		FProsettaStoryProvenance::FromCompiledWrapper(raw, provenance);
+		provenance.BuildId = ProsettaChecksum::SHA256(bytes.GetData(), bytes.Num()).ToLower();
+	}
+	return provenance;
+}
+
 bool UInkpotStoryAssetFactory::DecodeCompiledJSON(const FString& InJSON, FString& OutCompiledJSON, FString& OutError)
 {
 	TSharedPtr<FJsonObject> root;
@@ -286,6 +304,7 @@ bool UInkpotStoryAssetFactory::ApplyCompiledFiles(UInkpotStoryAsset* InAsset, co
 	InAsset->Modify();
 	InAsset->SetCompiledJSON(compiled);
 	InAsset->SetProsettaJSON(metadata);
+	InAsset->SetProsettaProvenance(CompiledProvenance(InFilename));
 	InAsset->UpdateAssetInfo(InFilename);
 	InAsset->MarkPackageDirty();
 	InAsset->PostEditChange();

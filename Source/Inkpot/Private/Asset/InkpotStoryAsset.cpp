@@ -104,3 +104,12 @@ UAssetUserData* UInkpotStoryAsset::GetAssetUserDataOfClass(TSubclassOf<UAssetUse
 	return UserData;
 }
 
+void UInkpotStoryAsset::SetProsettaProvenance( const FProsettaStoryProvenance &InProvenance )
+{
+	ProsettaProvenance = InProvenance;
+}
+
+const FProsettaStoryProvenance& UInkpotStoryAsset::GetProsettaProvenance() const
+{
+	return ProsettaProvenance;
+}

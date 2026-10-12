@@ -5,6 +5,8 @@ public class InkpotEditor : ModuleRules
 {
 	public InkpotEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
+		InkpotBuildRules.RequireMinimumEngine(Target, "InkpotEditor");
+
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicIncludePaths.AddRange(
@@ -51,7 +53,8 @@ public class InkpotEditor : ModuleRules
                 "ToolMenus",
                 "GameplayTags",
 
-				"EditorScriptingUtilities"
+				"EditorScriptingUtilities",
+				"MessageLog"
             }
         );
 		

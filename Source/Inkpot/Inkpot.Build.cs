@@ -4,6 +4,8 @@ public class Inkpot : ModuleRules
 {
 	public Inkpot(ReadOnlyTargetRules Target) : base(Target)
 	{
+		InkpotBuildRules.RequireMinimumEngine(Target, "Inkpot");
+
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicIncludePaths.AddRange(

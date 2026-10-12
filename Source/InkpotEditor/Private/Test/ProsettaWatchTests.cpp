@@ -14,6 +14,8 @@
 #include "UObject/StrongObjectPtr.h"
 #include "Misc/PackageName.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "PackageTools.h"
+#include "UObject/UObjectIterator.h"
 
 namespace
 {
@@ -45,9 +47,13 @@ namespace
   FAssetRegistryModule::GetRegistry().ScanModifiedAssetFiles({PackageFile(Asset)});
   return true;
  }
+ FString UserFixturePackage(const FString& Name)
+ {
+  return TEXT("/Game/ProsettaUserFixtures/") + Name;
+ }
  UProsettaGenerationAsset* UserFixture(const FString& Name, UObject* Reference = nullptr)
  {
-  UPackage* package = CreatePackage(*(TEXT("/Game/ProsettaUserFixtures/") + Name));
+  UPackage* package = CreatePackage(*UserFixturePackage(Name));
   UProsettaGenerationAsset* user = NewObject<UProsettaGenerationAsset>(package, *Name, RF_Public | RF_Standalone);
   user->Namespace = TEXT("UserContent");
   if (Reference) user->Assets.Add(TEXT("UserReference"), Reference);
@@ -133,6 +139,95 @@ namespace
  {
   return LoadObject<UProsettaGenerationAsset>(nullptr, *(TEXT("/Game/Prosetta/") + Fixture.Namespace + TEXT("/Generation.Generation")));
  }
+ // Owns everything a test writes into the host project's Content folder (generation
+ // namespaces, user fixture packages) plus its Saved scratch directories. Declare it
+ // before any TStrongObjectPtr in the test so it runs last, after those references are
+ // released, on every exit path including failed checks.
+ struct FFixtureCleanup
+ {
+  TArray<FString> PackageRoots;
+  TArray<FString> Directories;
+  void Track(const FFixture& Fixture)
+  {
+   PackageRoots.AddUnique(TEXT("/Game/Prosetta/") + Fixture.Namespace);
+   Directories.AddUnique(Fixture.Root);
+  }
+  void TrackPackage(const FString& PackageName) { PackageRoots.AddUnique(PackageName); }
+  void TrackDirectory(const FString& Directory) { Directories.AddUnique(Directory); }
+  FFixtureCleanup() = default;
+  FFixtureCleanup(const FFixtureCleanup&) = delete;
+  ~FFixtureCleanup() { Run(); }
+
+  static bool IsUnder(const FString& PackageName, const FString& Root)
+  {
+   return PackageName == Root || PackageName.StartsWith(Root + TEXT("/"));
+  }
+  TArray<UPackage*> LoadedPackages() const
+  {
+   TArray<UPackage*> result;
+   for (TObjectIterator<UPackage> it; it; ++it)
+    for (const FString& root : PackageRoots)
+     if (IsUnder(it->GetName(), root)) { result.Add(*it); break; }
+   return result;
+  }
+  TArray<FString> PackageFiles() const
+  {
+   TArray<FString> result;
+   const FString extension = FPackageName::GetAssetPackageExtension();
+   for (const FString& root : PackageRoots)
+   {
+    const FString single = FPackageName::LongPackageNameToFilename(root, extension);
+    if (FPaths::FileExists(single)) result.AddUnique(single);
+    IFileManager::Get().FindFilesRecursive(result, *FPackageName::LongPackageNameToFilename(root), *(TEXT("*") + extension), true, false, false);
+   }
+   return result;
+  }
+  // Drops the tracked packages from memory without touching disk, so a following
+  // LoadObject is a genuine cold load. Callers must release their own strong references.
+  bool Unload()
+  {
+   TArray<UPackage*> packages = LoadedPackages();
+   if (packages.IsEmpty()) return true;
+   FText error;
+   UPackageTools::UnloadPackages(packages, error, true);
+   return LoadedPackages().IsEmpty();
+  }
+  void Run()
+  {
+   if (PackageRoots.IsEmpty() && Directories.IsEmpty()) return;
+   const TArray<FString> files = PackageFiles();
+   for (UPackage* package : LoadedPackages())
+    FAssetRegistryModule::GetRegistry().PackageDeleted(package);
+   Unload();
+   // Anything the engine refused to unload must not stay saveable under its old name.
+   for (UPackage* package : LoadedPackages())
+   {
+    TArray<UObject*> objects;
+    GetObjectsWithPackage(package, objects, EGetObjectsFlags::None);
+    for (UObject* object : objects)
+    {
+     object->ClearFlags(RF_Public | RF_Standalone);
+     object->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+    }
+   }
+   for (const FString& file : files) IFileManager::Get().Delete(*file, false, true, true);
+   if (!files.IsEmpty()) FAssetRegistryModule::GetRegistry().ScanModifiedAssetFiles(files);
+   for (const FString& root : PackageRoots)
+    IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(root), false, true);
+   for (const FString& directory : Directories)
+    IFileManager::Get().DeleteDirectory(*directory, false, true);
+   // Remove the shared parents only once they are empty so real content is never touched.
+   for (const TCHAR* parent : {TEXT("/Game/Prosetta/Project199999"), TEXT("/Game/Prosetta"), TEXT("/Game/ProsettaUserFixtures")})
+   {
+    const FString directory = FPackageName::LongPackageNameToFilename(parent);
+    TArray<FString> remaining;
+    IFileManager::Get().FindFilesRecursive(remaining, *directory, TEXT("*"), true, false, false);
+    if (remaining.IsEmpty()) IFileManager::Get().DeleteDirectory(*directory, false, true);
+   }
+   PackageRoots.Empty();
+   Directories.Empty();
+  }
+ };
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchTest, "Inkpot.Prosetta.Watch",
@@ -142,9 +237,12 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
 {
  TestEqual(TEXT("SHA256 known empty vector"), SHA(nullptr, 0), FString(TEXT("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")));
  const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
  UProsettaWatchSubsystem* watch = NewObject<UProsettaWatchSubsystem>();
  const FFixture first = Generation(scope, TEXT("1"), TEXT("live"));
  const FFixture second = Generation(scope, TEXT("2"), TEXT("live"));
+ cleanup.Track(first);
+ cleanup.Track(second);
  TestTrue(TEXT("first complete event queued"), watch->ConsumeEvent(first.Event));
  UWorld* oldWorld = GEditor->PlayWorld;
  GEditor->PlayWorld = NewObject<UWorld>();
@@ -168,6 +266,7 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  TSoftObjectPtr<UInkpotStoryAsset> storyReference(story);
  TSoftObjectPtr<UProsettaSyncedArtifact> localizationReference(localized), audioReference(audio);
  const FFixture third = Generation(scope, TEXT("3"), TEXT("live"));
+ cleanup.Track(third);
  watch->ConsumeEvent(third.Event);
  TestTrue(TEXT("changed generation applied"), watch->TryApplyPending());
  TestEqual(TEXT("story identity stable"), storyReference.Get(), story);
@@ -178,38 +277,58 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  TestTrue(TEXT("runtime localization lookup"), localized->ResolveLocalizedText(FName(TEXT("023A")), TEXT("fr"), translated));
  TestEqual(TEXT("runtime lookup sees updated translation"), translated, FString(TEXT("Bonjour 3")));
  const FFixture corrupt = Generation(scope, TEXT("4"), TEXT("live"), true, true);
+ cleanup.Track(corrupt);
  watch->ConsumeEvent(corrupt.Event);
  TestFalse(TEXT("corrupt complete generation fails"), watch->TryApplyPending());
  TestTrue(TEXT("previous story retained"), story->GetCompiledJSON().Contains(TEXT("Generation 3")));
  TestTrue(TEXT("previous localization retained"), localized->Text.Contains(TEXT("Bonjour 3")));
  TestTrue(TEXT("error visible"), watch->GetStatus().Contains(TEXT("checksum")));
  const FString nativeDestination = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("NativeFixture") / scope);
+ cleanup.TrackDirectory(nativeDestination);
  TestFalse(TEXT("native source never automatically copied"), FPaths::FileExists(nativeDestination / TEXT("Test.h")));
  TestTrue(TEXT("explicit native import"), watch->ImportNativeSources(third.Namespace, nativeDestination));
  TestTrue(TEXT("explicit source file exists"), FPaths::FileExists(nativeDestination / TEXT("Test.h")));
  const FFixture frozen = Generation(scope, TEXT("3"), TEXT("latest-release"));
+ cleanup.Track(frozen);
  watch->ConsumeEvent(frozen.Event);
  TestTrue(TEXT("frozen applies separately"), watch->TryApplyPending());
  UProsettaGenerationAsset* release = State(frozen);
  TestTrue(TEXT("frozen identity separate"), release && release != state && release->Assets.FindRef(TEXT("compiled-story")).Get() != story);
+ cleanup.TrackPackage(UserFixturePackage(TEXT("Reference_") + SHAString(scope)));
  TStrongObjectPtr<UProsettaGenerationAsset> userReference(UserFixture(TEXT("Reference_") + SHAString(scope), audio));
  TestTrue(TEXT("external user audio reference saved"), SaveUserFixture(userReference.Get()));
  const FFixture removal = Generation(scope, TEXT("5"), TEXT("live"), false);
+ cleanup.Track(removal);
  watch->ConsumeEvent(removal.Event);
  TestTrue(TEXT("owned audio removal applies"), watch->TryApplyPending());
  TestFalse(TEXT("obsolete owned audio removed from registry"), state->Assets.Contains(TEXT("audio-file:take1")));
  TestEqual(TEXT("referenced retired identity retained"), state->RetiredAssets.FindRef(TEXT("audio-file:take1")).Get(), static_cast<UObject*>(audio));
  TestNotNull(TEXT("retired audio references remain usable"), audio->Audio.Get());
  const FFixture reappeared = Generation(scope, TEXT("6"), TEXT("live"));
+ cleanup.Track(reappeared);
  watch->ConsumeEvent(reappeared.Event);
  TestTrue(TEXT("reappeared selected audio applies"), watch->TryApplyPending());
  TestEqual(TEXT("reappeared audio restores original identity"), state->Assets.FindRef(TEXT("audio-file:take1")).Get(), static_cast<UObject*>(audio));
  watch->ConsumeEvent(TEXT("{\"schemaVersion\":1,\"type\":\"blocked\"}"));
  TestEqual(TEXT("blocked event does not queue import"), watch->GetPendingCount(), 0);
  TestTrue(TEXT("blocked retains story"), story->GetCompiledJSON().Contains(TEXT("Generation 6")));
- // Keep ignored fixture packages for the cold-load persistence verification.
- FFileHelper::SaveStringToFile(TEXT("/Game/Prosetta/") + frozen.Namespace + TEXT("/Generation.Generation"), *(FPaths::ProjectSavedDir() / TEXT("WatchPersistence.txt")));
- IFileManager::Get().DeleteDirectory(*nativeDestination, false, true);
+ // Cold-load persistence: drop every fixture package from memory, then reload the saved
+ // frozen generation from disk. The cleanup guard removes the files afterwards.
+ userReference.Reset();
+ TestTrue(TEXT("fixture packages unload for cold reload"), cleanup.Unload());
+ UProsettaGenerationAsset* reloadedState = State(frozen);
+ if (!TestNotNull(TEXT("saved registry reloads"), reloadedState)) return false;
+ UProsettaSyncedArtifact* reloadedAudio = Cast<UProsettaSyncedArtifact>(reloadedState->Assets.FindRef(TEXT("audio-file:take1")));
+ if (!TestNotNull(TEXT("saved audio wrapper reloads"), reloadedAudio) || !TestNotNull(TEXT("saved nested SoundWave reloads"), reloadedAudio->Audio.Get())) return false;
+ TestFalse(TEXT("reloaded SoundWave is persistent"), reloadedAudio->Audio->HasAnyFlags(RF_Transient));
+ TestTrue(TEXT("reloaded SoundWave retains duration"), reloadedAudio->Audio->Duration > 0);
+ UProsettaSyncedArtifact* reloadedLocalization = Cast<UProsettaSyncedArtifact>(reloadedState->Assets.FindRef(TEXT("localization")));
+ FString reloadedText;
+ if (TestNotNull(TEXT("saved localization reloads"), reloadedLocalization))
+ {
+  TestTrue(TEXT("saved localization resolves"), reloadedLocalization->ResolveLocalizedText(FName(TEXT("023A")), TEXT("fr"), reloadedText));
+  TestEqual(TEXT("saved localized string"), reloadedText, FString(TEXT("Bonjour 3")));
+ }
  return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchOwnedRemovalTest, "Inkpot.Prosetta.WatchOwnedRemoval",
@@ -217,9 +336,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchOwnedRemovalTest, "Inkpot.Prosett
 
 bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
 {
- TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
  const FString scope = TEXT("removal-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
  const FFixture unused = Generation(scope, TEXT("1"), TEXT("live"));
+ cleanup.Track(unused);
+ cleanup.TrackPackage(UserFixturePackage(TEXT("Unrelated_") + SHAString(scope)));
+ cleanup.TrackPackage(UserFixturePackage(TEXT("External_") + SHAString(scope)));
  watch->ConsumeEvent(unused.Event);
  if (!TestTrue(TEXT("unreferenced fixture imports"), watch->TryApplyPending())) return false;
  TStrongObjectPtr<UProsettaGenerationAsset> unusedState(State(unused));
@@ -232,6 +355,7 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
  TestTrue(TEXT("unrelated user package saved"), SaveUserFixture(unrelated.Get()));
  const FString unrelatedPackage = PackageFile(unrelated.Get());
  const FFixture removal = Generation(scope, TEXT("2"), TEXT("live"), false);
+ cleanup.Track(removal);
  watch->ConsumeEvent(removal.Event);
  TestTrue(TEXT("obsolete unreferenced generation applies"), watch->TryApplyPending());
  TestFalse(TEXT("unreferenced owned package physically removed"), FPaths::FileExists(removedPackage));
@@ -242,6 +366,7 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
  AddInfo(watch->GetStatus());
 
  const FFixture referenced = Generation(scope + TEXT("-referenced"), TEXT("1"), TEXT("live"));
+ cleanup.Track(referenced);
  watch->ConsumeEvent(referenced.Event);
  if (!TestTrue(TEXT("referenced fixture imports"), watch->TryApplyPending())) return false;
  TStrongObjectPtr<UProsettaGenerationAsset> referencedState(State(referenced));
@@ -253,6 +378,7 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
  const TWeakObjectPtr<UObject> retainedTarget(referencedAudio);
  user->Assets.Empty(); // Keep the saved disk edge but remove the memory edge for this scan.
  const FFixture referencedRemoval = Generation(scope + TEXT("-referenced"), TEXT("2"), TEXT("live"), false);
+ cleanup.Track(referencedRemoval);
  watch->ConsumeEvent(referencedRemoval.Event);
  TestTrue(TEXT("referenced obsolete generation applies"), watch->TryApplyPending());
  TestFalse(TEXT("referenced obsolete key leaves active registry"), referencedState->Assets.Contains(TEXT("audio-file:take1")));
@@ -263,51 +389,26 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
  TestEqual(TEXT("saved user identity preserved"), user->Assets.FindRef(TEXT("UserReference")).Get(), referencedAudio);
  TestEqual(TEXT("rechecking referenced asset preserves it"), watch->CleanupRetiredAssets(referenced.Namespace), 0);
  AddInfo(watch->GetStatus());
- auto persistence = MakeShared<FJsonObject>();
- persistence->SetStringField(TEXT("removedPackage"), removedPackage);
- persistence->SetStringField(TEXT("retainedPackage"), retainedPackage);
- persistence->SetStringField(TEXT("unrelatedPackage"), unrelatedPackage);
- persistence->SetStringField(TEXT("userPath"), user->GetPathName());
- persistence->SetStringField(TEXT("registryPath"), referencedState->GetPathName());
- FFileHelper::SaveStringToFile(Json(persistence), *(FPaths::ProjectSavedDir() / TEXT("WatchRemovalPersistence.json")));
- return true;
-}
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchPersistenceTest, "Inkpot.Prosetta.WatchPersistence",
- EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FProsettaWatchPersistenceTest::RunTest(const FString& InParameters)
-{
- FString path;
- if (!TestTrue(TEXT("watch persistence fixture recorded"), FFileHelper::LoadFileToString(path, *(FPaths::ProjectSavedDir() / TEXT("WatchPersistence.txt"))))) return false;
- UProsettaGenerationAsset* state = LoadObject<UProsettaGenerationAsset>(nullptr, *path);
- if (!TestNotNull(TEXT("saved registry reloads"), state)) return false;
- UProsettaSyncedArtifact* audio = Cast<UProsettaSyncedArtifact>(state->Assets.FindRef(TEXT("audio-file:take1")));
- if (!TestNotNull(TEXT("saved audio wrapper reloads"), audio) || !TestNotNull(TEXT("saved nested SoundWave reloads"), audio->Audio.Get())) return false;
- TestFalse(TEXT("reloaded SoundWave is persistent"), audio->Audio->HasAnyFlags(RF_Transient));
- TestTrue(TEXT("reloaded SoundWave retains duration"), audio->Audio->Duration > 0);
- UProsettaSyncedArtifact* localization = Cast<UProsettaSyncedArtifact>(state->Assets.FindRef(TEXT("localization")));
- FString localized;
- if (TestNotNull(TEXT("saved localization reloads"), localization))
+ // Cold-load persistence: release every strong reference, drop the fixture packages from
+ // memory, then verify the disk state. The cleanup guard removes the files afterwards.
+ const FString userPath = user->GetPathName();
+ const FString registryPath = referencedState->GetPathName();
+ user.Reset();
+ referencedState.Reset();
+ unrelated.Reset();
+ unusedState.Reset();
+ TestTrue(TEXT("fixture packages unload for cold reload"), cleanup.Unload());
+ TestFalse(TEXT("deleted owned package absent after reload"), FPaths::FileExists(removedPackage));
+ TestTrue(TEXT("referenced owned package retained after reload"), FPaths::FileExists(retainedPackage));
+ TestTrue(TEXT("unrelated package retained after reload"), FPaths::FileExists(unrelatedPackage));
+ UProsettaGenerationAsset* reloadedUser = LoadObject<UProsettaGenerationAsset>(nullptr, *userPath);
+ UProsettaGenerationAsset* reloadedRegistry = LoadObject<UProsettaGenerationAsset>(nullptr, *registryPath);
+ if (TestNotNull(TEXT("saved external user reference loads"), reloadedUser) && TestNotNull(TEXT("saved retirement registry loads"), reloadedRegistry))
  {
-  TestTrue(TEXT("saved localization resolves"), localization->ResolveLocalizedText(FName(TEXT("023A")), TEXT("fr"), localized));
-  TestEqual(TEXT("saved localized string"), localized, FString(TEXT("Bonjour 3")));
- }
- FString removalJSON;
- TSharedPtr<FJsonObject> removal;
- if (!TestTrue(TEXT("removal persistence record exists"), FFileHelper::LoadFileToString(removalJSON, *(FPaths::ProjectSavedDir() / TEXT("WatchRemovalPersistence.json"))))) return false;
- if (!TestTrue(TEXT("removal persistence record parses"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(removalJSON), removal))) return false;
- TestFalse(TEXT("deleted owned package absent after restart"), FPaths::FileExists(removal->GetStringField(TEXT("removedPackage"))));
- TestTrue(TEXT("referenced owned package retained after restart"), FPaths::FileExists(removal->GetStringField(TEXT("retainedPackage"))));
- TestTrue(TEXT("unrelated package retained after restart"), FPaths::FileExists(removal->GetStringField(TEXT("unrelatedPackage"))));
- UProsettaGenerationAsset* user = LoadObject<UProsettaGenerationAsset>(nullptr, *removal->GetStringField(TEXT("userPath")));
- UProsettaGenerationAsset* retiredRegistry = LoadObject<UProsettaGenerationAsset>(nullptr, *removal->GetStringField(TEXT("registryPath")));
- if (TestNotNull(TEXT("saved external user reference loads"), user) && TestNotNull(TEXT("saved retirement registry loads"), retiredRegistry))
- {
-  UObject* retired = retiredRegistry->RetiredAssets.FindRef(TEXT("audio-file:take1"));
+  UObject* retired = reloadedRegistry->RetiredAssets.FindRef(TEXT("audio-file:take1"));
   TestNotNull(TEXT("saved referenced retired asset loads"), retired);
-  TestEqual(TEXT("saved user reference matches retained identity"), user->Assets.FindRef(TEXT("UserReference")).Get(), retired);
+  TestEqual(TEXT("saved user reference matches retained identity"), reloadedUser->Assets.FindRef(TEXT("UserReference")).Get(), retired);
  }
-
  return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchCLITest, "Inkpot.Prosetta.WatchCLI",
@@ -373,8 +474,8 @@ bool FProsettaWatchCLITest::RunTest(const FString& InParameters)
 class FProsettaSidecarCommand : public IAutomationLatentCommand
 {
 public:
- FProsettaSidecarCommand(FAutomationTestBase* InTest, UProsettaWatchSubsystem* InWatch, const FFixture& InFixture)
-  : Test(InTest), Watch(InWatch), Fixture(InFixture), Started(FPlatformTime::Seconds()) {}
+ FProsettaSidecarCommand(FAutomationTestBase* InTest, UProsettaWatchSubsystem* InWatch, const FFixture& InFixture, TSharedRef<FFixtureCleanup> InCleanup)
+  : Test(InTest), Watch(InWatch), Fixture(InFixture), Cleanup(InCleanup), Started(FPlatformTime::Seconds()) {}
  virtual bool Update() override
  {
   const FString path = TEXT("/Game/Prosetta/") + Fixture.Namespace + TEXT("/Generation.Generation");
@@ -392,12 +493,14 @@ public:
   Test->TestTrue(TEXT("CLI launched with native watch arguments"), arguments.StartsWith(TEXT("watch --json --config ")) && arguments.Contains(TEXT("--channel live")));
   Test->TestFalse(TEXT("default watch mirrors"), arguments.Contains(TEXT("--no-mirror")));
   Watch->StopWatch();
+  Cleanup->Run();
   return true;
  }
 private:
  FAutomationTestBase* Test;
  UProsettaWatchSubsystem* Watch;
  FFixture Fixture;
+ TSharedRef<FFixtureCleanup> Cleanup;
  double Started;
 };
 
@@ -407,6 +510,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarTest, "Inkpot.Prosetta.WatchSid
 bool FProsettaSidecarTest::RunTest(const FString& InParameters)
 {
  const FFixture fixture = Generation(TEXT("sidecar-") + FGuid::NewGuid().ToString(), TEXT("9"), TEXT("live"));
+ const TSharedRef<FFixtureCleanup> cleanup = MakeShared<FFixtureCleanup>();
+ cleanup->Track(fixture);
  const FString eventPath = fixture.Root / TEXT("event.ndjson");
  const FString executable = fixture.Root / TEXT("fixture-sidecar.sh");
  const FString config = fixture.Root / TEXT("config.json");
@@ -421,7 +526,7 @@ bool FProsettaSidecarTest::RunTest(const FString& InParameters)
  UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
  if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
  if (!TestTrue(TEXT("real sidecar process launches"), watch->StartWatch(executable, config, TEXT("")))) return false;
- AddCommand(new FProsettaSidecarCommand(this, watch, fixture));
+ AddCommand(new FProsettaSidecarCommand(this, watch, fixture, cleanup));
  return true;
 }
 
