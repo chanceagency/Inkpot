@@ -39,7 +39,7 @@ For general support and chat with other users, check out [Inkle's discord](https
 
 ## Changelog  
 
-### Prosetta-specific changes (unreleased)
+### Prosetta-specific changes (1.42.23)
 Inline Ink expressions in sidecar strings (`{2+2}`, `{gold}`, `{double(gold)}`…) now display their evaluated values in the default and translated languages, matching Prosetta's Inline Ink Player.<br>
 Editor watch targets the native `watch` command of Prosetta Sync CLI 0.10.0 or newer (tested with 0.10.0 and 0.11.0): version check before launch, `--channel`, `--volumes` and `--no-mirror` options, event codes and CLI usage errors surfaced through `Prosetta.Watch.Status`.<br>
 
