@@ -84,6 +84,23 @@ bool FProsettaParserTest::RunTest(const FString& InParameters)
 		TestEqual(TEXT("unresolved keeps runtime text"), result.CleanText, TEXT("I'm a math wiz, 4 equals four!"));
 	}
 
+	// With nested tags the outer resolver still sees the runtime text, not nested replacements.
+	{
+		const FString fragment = TEXT("<prosetta id='A'>Score <prosetta id='B'>4</prosetta>!</prosetta>");
+		FString seenOuter;
+		auto resolver = [&seenOuter](FName InLineId, FString& InOutText) -> bool
+		{
+			if (InLineId == FName(TEXT("B"))) { InOutText = TEXT("four"); return true; }
+			seenOuter = InOutText;
+			return false;
+		};
+		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragmentResolved(fragment, resolver);
+		TestEqual(TEXT("outer resolver sees runtime text"), seenOuter, TEXT("Score 4!"));
+		if (TestEqual(TEXT("one outer segment"), result.Segments.Num(), 1))
+			TestEqual(TEXT("outer runtime text"), result.Segments[0].RuntimeText, TEXT("Score 4!"));
+		TestEqual(TEXT("nested display kept when outer declines"), result.CleanText, TEXT("Score four!"));
+	}
+
 	// Malformed / unbalanced markup degrades gracefully rather than dropping content.
 	{
 		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragment(TEXT("oops <prosetta id='x'>no close"));

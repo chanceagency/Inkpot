@@ -74,6 +74,17 @@ bool FProsettaInlineTemplateParseTest::RunTest(const FString& InParameters)
 		}
 	}
 
+	// Apostrophes within words are prose, not quotes.
+	{
+		const FProsettaInlineTemplate parsed(TEXT("{visited: You're back|Welcome}. {a: it's} and {b: don't}"));
+		const auto expressions = parsed.GetExpressions();
+		if (TestEqual(TEXT("contractions keep boundaries"), expressions.Num(), 3))
+		{
+			TestEqual(TEXT("contraction in conditional"), FString(expressions[0]), TEXT("visited: You're back|Welcome"));
+			TestEqual(TEXT("contractions do not pair"), FString(expressions[2]), TEXT("b: don't"));
+		}
+	}
+
 	// An unbalanced brace is literal text and renders unchanged.
 	{
 		const FProsettaInlineTemplate parsed(TEXT("Open { brace and {gold} gold"));
@@ -98,6 +109,7 @@ bool FProsettaInlineTemplateParseTest::RunTest(const FString& InParameters)
 
 	// Plain-text projection used for alignment.
 	TestEqual(TEXT("markup stripped"), FProsettaInlineTemplate::NormalizeToPlainText(TEXT("  <b>Hi</b>   there\n friend ")), TEXT("Hi there friend"));
+	TestEqual(TEXT("bare angle brackets kept"), FProsettaInlineTemplate::NormalizeToPlainText(TEXT("hp < max > 0 <3 <>glue")), TEXT("hp < max > 0 <3 glue"));
 	TestEqual(TEXT("lone angle bracket kept"), FProsettaInlineTemplate::NormalizeToPlainText(TEXT("a < b")), TEXT("a < b"));
 
 	return true;
@@ -183,6 +195,11 @@ bool FProsettaInlineTemplateExtractTest::RunTest(const FString& InParameters)
 		TestTrue(TEXT("partially ambiguous"), FProsettaInlineTemplate(TEXT("x {a}{b} y {c}!")).ExtractValues(TEXT("x 12 y 3!"), values));
 		TestEqual(TEXT("anchored value"), ValueOf(values, TEXT("c")), TEXT("3"));
 		TestNull(TEXT("ambiguous skipped"), values.Find(TEXT("a")));
+
+		// A key with an unrecovered occurrence keeps no values, so none shift onto it.
+		TestTrue(TEXT("repeated partially ambiguous"), FProsettaInlineTemplate(TEXT("{r}{x} then {r} at {y}.")).ExtractValues(TEXT("3a then 5 at 9."), values));
+		TestNull(TEXT("repeated key dropped"), values.Find(TEXT("r")));
+		TestEqual(TEXT("other key kept"), ValueOf(values, TEXT("y")), TEXT("9"));
 	}
 
 	// Divergent text, unevaluated text and expression-free templates recover nothing.
@@ -284,8 +301,13 @@ bool FProsettaInlineTemplateRenderTest::RunTest(const FString& InParameters)
 		TestTrue(TEXT("nested template"), FProsettaInlineTemplate(TEXT("{greeting}!")).Render(nullptr, resolver, out));
 		TestEqual(TEXT("nested rendered"), out, TEXT("Hello Ada!"));
 
-		FProsettaInlineTemplate(TEXT("{loop}")).Render(nullptr, resolver, out);
+		TestFalse(TEXT("self-reference unresolved"), FProsettaInlineTemplate(TEXT("{loop}")).Render(nullptr, resolver, out));
 		TestEqual(TEXT("self-reference terminates"), out, TEXT("{loop}"));
+
+		// A nested template's unresolved placeholder fails the whole line.
+		variables.Add(TEXT("partial"), TEXT("Hello {title} {hero}"));
+		TestFalse(TEXT("nested unresolved reported"), FProsettaInlineTemplate(TEXT("{partial}!")).Render(nullptr, resolver, out));
+		TestEqual(TEXT("nested unresolved verbatim"), out, TEXT("Hello {title} Ada!"));
 
 		TestFalse(TEXT("unknown variable"), FProsettaInlineTemplate(TEXT("{missing} {hero}")).Render(nullptr, resolver, out));
 		TestEqual(TEXT("unknown verbatim"), out, TEXT("{missing} Ada"));

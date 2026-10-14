@@ -66,7 +66,7 @@ void UInkpotLine::Initialise(const FString &InString)
 		FProsettaTemplateValues values;
 		const int32 valuesIndex = resolvedValues.IndexOfByPredicate([&segment](const FResolvedValues& InResolved)
 		{
-			return InResolved.LineId == segment.LineId && InResolved.RuntimeText == segment.RuntimeText;
+			return InResolved.LineId == segment.LineId && InResolved.RuntimeText.Equals(segment.RuntimeText, ESearchCase::CaseSensitive);
 		});
 		if (valuesIndex != INDEX_NONE)
 		{

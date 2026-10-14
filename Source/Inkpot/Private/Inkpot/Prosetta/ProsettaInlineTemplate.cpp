@@ -3,6 +3,7 @@
 #include "Inkpot/InkpotStoryInternal.h"
 #include "Ink/Value.h"
 #include "Ink/VariableState.h"
+#include "Misc/Optional.h"
 #include "String/Find.h"
 
 namespace
@@ -29,16 +30,11 @@ namespace
 
 	using FRawSegments = TArray<FRawSegment, TInlineAllocator<8>>;
 
-	FStringView TrimView(FStringView InView)
-	{
-		return InView.TrimStartAndEnd();
-	}
-
 	/**
 	 * Splits text into literal and {expression} segments with a quote-aware,
 	 * escape-aware, nested-brace-aware scan. An unbalanced '{' stays literal.
-	 * Mirrors splitTemplateExpressionSegments in the Prosetta web player so the
-	 * two can never disagree on placeholder boundaries.
+	 * Mirrors splitTemplateExpressionSegments in the Prosetta web player, except
+	 * that an apostrophe within a word does not open a single-quoted string.
 	 */
 	void SplitSegments(FStringView InText, FRawSegments& OutSegments)
 	{
@@ -89,7 +85,9 @@ namespace
 					bInDoubleQuote = next != TEXT('"');
 					continue;
 				}
-				if (next == TEXT('\''))
+				// An apostrophe within a word ( "it's", "players'" ) is prose, not a quote:
+				// Ink conditional and sequence text is full of them.
+				if (next == TEXT('\'') && !FChar::IsAlnum(InText[cursor - 2]))
 					bInSingleQuote = true;
 				else if (next == TEXT('"'))
 					bInDoubleQuote = true;
@@ -109,7 +107,7 @@ namespace
 			FlushLiteral(index);
 
 			const FStringView inner = InText.Mid(index + 1, cursor - index - 2);
-			const FStringView trimmed = TrimView(inner);
+			const FStringView trimmed = inner.TrimStartAndEnd();
 			const int32 trimmedStart = trimmed.IsEmpty() ? index + 1 : static_cast<int32>(trimmed.GetData() - InText.GetData());
 			OutSegments.Add({ trimmedStart, trimmed.Len(), index, cursor - index, true });
 
@@ -123,7 +121,7 @@ namespace
 	void AppendNormalizedKey(FStringView InExpression, FString& OutKey)
 	{
 		bool bPendingSpace = false;
-		for (const TCHAR ch : TrimView(InExpression))
+		for (const TCHAR ch : InExpression.TrimStartAndEnd())
 		{
 			if (FChar::IsWhitespace(ch))
 			{
@@ -142,7 +140,7 @@ namespace
 	/** Compares an expression against a normalised key without allocating. */
 	bool KeyEquals(FStringView InExpression, FStringView InKey)
 	{
-		const FStringView trimmed = TrimView(InExpression);
+		const FStringView trimmed = InExpression.TrimStartAndEnd();
 		int32 k = 0;
 		bool bPendingSpace = false;
 		for (const TCHAR ch : trimmed)
@@ -366,7 +364,10 @@ FString FProsettaInlineTemplate::NormalizeToPlainText(FStringView InText)
 	for (int32 i = 0; i < len; ++i)
 	{
 		const TCHAR ch = InText[i];
-		if (ch == TEXT('<'))
+		// Only tag-like spans are markup ( <b>, </>, <color=x>, glue <> ); a bare '<' is
+		// prose ( "hp < max", "<3" ) and must not swallow the text after it.
+		const TCHAR after = i + 1 < len ? InText[i + 1] : TEXT('\0');
+		if (ch == TEXT('<') && (FChar::IsAlpha(after) || after == TEXT('/') || after == TEXT('>')))
 		{
 			int32 close;
 			if (InText.RightChop(i + 1).FindChar(TEXT('>'), close))
@@ -548,6 +549,8 @@ bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsetta
 	if (!aligner.Match(0, SkipWhitespace(runtime, first.Len())))
 		return false;
 
+	TArray<TOptional<FStringView>, TInlineAllocator<8>> captured;
+	captured.SetNum(ExpressionKeys.Num());
 	for (int32 k = 0; k < numCaptures; ++k)
 	{
 		// A placeholder flanked by an interior literal with no anchoring text is
@@ -558,12 +561,26 @@ bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsetta
 			continue;
 
 		const int32 expression = Alignment.ExpressionIndices[k];
-		if (!ExpressionKeys.IsValidIndex(expression))
+		if (!captured.IsValidIndex(expression))
 			continue;
 
 		const TPair<int32, int32>& capture = aligner.Captures[k];
-		const FStringView value = FStringView(runtime).Mid(capture.Key, capture.Value - capture.Key).TrimStartAndEnd();
-		OutValues.Add(ExpressionKeys[expression], FString(value));
+		captured[expression] = FStringView(runtime).Mid(capture.Key, capture.Value - capture.Key).TrimStartAndEnd();
+	}
+
+	// Render consumes a key's values by occurrence, so a key with any occurrence left
+	// unrecovered ( ambiguous, or dropped with markup ) keeps none: a gap would shift
+	// later values onto earlier placeholders.
+	for (int32 expression = 0; expression < captured.Num(); ++expression)
+	{
+		if (!captured[expression].IsSet())
+			continue;
+		const FString& key = ExpressionKeys[expression];
+		bool bComplete = true;
+		for (int32 other = 0; other < captured.Num() && bComplete; ++other)
+			bComplete = captured[other].IsSet() || !ExpressionKeys[other].Equals(key, ESearchCase::CaseSensitive);
+		if (bComplete)
+			OutValues.Add(key, FString(*captured[expression]));
 	}
 
 	return !OutValues.IsEmpty();
@@ -661,12 +678,24 @@ bool FProsettaInlineTemplate::RenderInternal(const FProsettaTemplateValues* InVa
 			continue;
 		}
 
-		if (bMayNest && InDepth < GMaxRecursionDepth && MayContainExpressions(scratch))
+		if (bMayNest && MayContainExpressions(scratch))
 		{
-			FString nested;
+			// A value that is itself a template renders recursively; any placeholder it
+			// leaves unresolved ( or still holds at the depth limit ) fails the line.
 			const FProsettaInlineTemplate nestedTemplate(scratch);
-			nestedTemplate.RenderInternal(nullptr, InResolver, InDepth + 1, nested);
-			OutText += nested;
+			if (InDepth < GMaxRecursionDepth)
+			{
+				FString nested;
+				if (!nestedTemplate.RenderInternal(nullptr, InResolver, InDepth + 1, nested))
+					bAllResolved = false;
+				OutText += nested;
+			}
+			else
+			{
+				if (nestedTemplate.HasExpressions())
+					bAllResolved = false;
+				OutText += scratch;
+			}
 		}
 		else
 		{
