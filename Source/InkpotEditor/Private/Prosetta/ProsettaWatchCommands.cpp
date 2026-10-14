@@ -9,13 +9,24 @@ namespace
   return GEditor ? GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>() : nullptr;
  }
  FAutoConsoleCommand Start(TEXT("Prosetta.Watch.Start"),
-  TEXT("Start the sidecar: Prosetta.Watch.Start \"absolute CLI executable\" \"absolute config file\" [\"absolute FFmpeg executable\"]"),
+  TEXT("Start `prosetta-sync watch` (CLI 0.10.0+): Prosetta.Watch.Start \"absolute CLI executable\" \"absolute config file\" [\"absolute FFmpeg executable\"] [--channel=live|latest-release] [--volumes=core] [--no-mirror]"),
   FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
   {
    if (UProsettaWatchSubsystem* watch = Watch())
    {
-    if (Args.Num() < 2 || Args.Num() > 3) { UE_LOG(LogTemp, Warning, TEXT("Expected CLI executable, config file, and optional FFmpeg executable.")); return; }
-    watch->StartWatch(Args[0], Args[1], Args.Num() == 3 ? Args[2] : FString());
+    TArray<FString> paths;
+    FString channel = TEXT("live"), volumes;
+    bool bMirror = true;
+    for (const FString& arg : Args)
+    {
+     if (arg.StartsWith(TEXT("--channel="), ESearchCase::CaseSensitive)) channel = arg.RightChop(10);
+     else if (arg.StartsWith(TEXT("--volumes="), ESearchCase::CaseSensitive)) volumes = arg.RightChop(10);
+     else if (arg.Equals(TEXT("--no-mirror"), ESearchCase::CaseSensitive)) bMirror = false;
+     else if (arg.StartsWith(TEXT("--"))) { UE_LOG(LogTemp, Warning, TEXT("Unknown watch option %s."), *arg); return; }
+     else paths.Add(arg);
+    }
+    if (paths.Num() < 2 || paths.Num() > 3) { UE_LOG(LogTemp, Warning, TEXT("Expected CLI executable, config file, and optional FFmpeg executable.")); return; }
+    watch->StartWatch(paths[0], paths[1], paths.Num() == 3 ? paths[2] : FString(), channel, volumes, bMirror);
     UE_LOG(LogTemp, Display, TEXT("Prosetta: %s"), *watch->GetStatus());
    }
   }));

@@ -67,6 +67,38 @@ bool FProsettaParserTest::RunTest(const FString& InParameters)
 		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragmentResolved(fragment, resolver);
 		TestEqual(TEXT("authoritative string used"), result.CleanText, TEXT("Honk honk!"));
 		TestEqual(TEXT("segment text resolved"), result.Segments[0].Text, TEXT("Honk honk!"));
+		TestEqual(TEXT("runtime text kept"), result.Segments[0].RuntimeText, TEXT("placeholder"));
+	}
+
+	// The resolver sees the runtime inner text, so it can evaluate templates against it.
+	{
+		const FString fragment = TEXT("<prosetta id='0001'>I'm a math wiz, 4 equals four!</prosetta>");
+		FString seen;
+		auto resolver = [&seen](FName InLineId, FString& InOutText) -> bool
+		{
+			seen = InOutText;
+			return false;
+		};
+		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragmentResolved(fragment, resolver);
+		TestEqual(TEXT("resolver input is runtime text"), seen, TEXT("I'm a math wiz, 4 equals four!"));
+		TestEqual(TEXT("unresolved keeps runtime text"), result.CleanText, TEXT("I'm a math wiz, 4 equals four!"));
+	}
+
+	// With nested tags the outer resolver still sees the runtime text, not nested replacements.
+	{
+		const FString fragment = TEXT("<prosetta id='A'>Score <prosetta id='B'>4</prosetta>!</prosetta>");
+		FString seenOuter;
+		auto resolver = [&seenOuter](FName InLineId, FString& InOutText) -> bool
+		{
+			if (InLineId == FName(TEXT("B"))) { InOutText = TEXT("four"); return true; }
+			seenOuter = InOutText;
+			return false;
+		};
+		const FProsettaParseResult result = UInkpotProsettaLibrary::ParseFragmentResolved(fragment, resolver);
+		TestEqual(TEXT("outer resolver sees runtime text"), seenOuter, TEXT("Score 4!"));
+		if (TestEqual(TEXT("one outer segment"), result.Segments.Num(), 1))
+			TestEqual(TEXT("outer runtime text"), result.Segments[0].RuntimeText, TEXT("Score 4!"));
+		TestEqual(TEXT("nested display kept when outer declines"), result.CleanText, TEXT("Score four!"));
 	}
 
 	// Malformed / unbalanced markup degrades gracefully rather than dropping content.
@@ -125,13 +157,14 @@ bool FProsettaMetadataTest::RunTest(const FString& InParameters)
 	FProsettaLineMetadata missing;
 	TestFalse(TEXT("unknown id unresolved"), metadata->Resolve(FName(TEXT("ZZZZ")), missing));
 
-	// Engine Sync records carry both a database id and the tag's lineId.
+	// Engine Sync records carry both a database id and the tag's lineId; join on lineId.
 	TestTrue(TEXT("load Engine Sync array"), metadata->LoadFromJSON(TEXT(R"JSON(
-		{"lines":[{"id":"23-0001","lineId":"0001","string":"Hello","speakerShortname":"QUEEN"}]}
+	{"lines":[{"id":"23-0001","lineId":"0001","string":"Hello","speakerShortname":"QUEEN"},{"id":"0002","string":"Legacy"}]}
 	)JSON")));
-	TestTrue(TEXT("join by tag lineId"), metadata->Resolve(FName(TEXT("0001")), line));
-	TestEqual(TEXT("Engine Sync speaker"), line.SpeakerShortname, TEXT("QUEEN"));
+	if (TestTrue(TEXT("join by tag lineId"), metadata->Resolve(FName(TEXT("0001")), line)))
+		TestEqual(TEXT("Engine Sync speaker"), line.SpeakerShortname, TEXT("QUEEN"));
 	TestFalse(TEXT("record id is not the join key"), metadata->Resolve(FName(TEXT("23-0001")), missing));
+	TestTrue(TEXT("id-only records still join"), metadata->ResolveText(FName(TEXT("0002")), text));
 
 	return true;
 }

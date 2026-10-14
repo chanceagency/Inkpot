@@ -57,6 +57,11 @@ struct INKPOT_API FProsettaParsedSegment
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
 	FString Text;
 
+	/** The tag's inner text as evaluated by the Ink runtime, with nested markup removed.
+	 *  Inline expressions ( e.g. {2+2} ) have already been evaluated in this text. */
+	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
+	FString RuntimeText;
+
 	/** The non-id data attributes declared on the tag. */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
 	TMap<FName, FString> Attributes;

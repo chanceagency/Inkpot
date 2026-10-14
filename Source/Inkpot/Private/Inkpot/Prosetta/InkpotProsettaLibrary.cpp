@@ -129,6 +129,7 @@ FProsettaParseResult UInkpotProsettaLibrary::ParseFragmentResolved(const FString
 		ParseAttributes(attrText, segment.LineId, segment.Attributes);
 
 		FString innerText;
+		FString runtimeText;
 		int32 nextCursor;
 		if (bSelfClosing)
 		{
@@ -174,14 +175,20 @@ FProsettaParseResult UInkpotProsettaLibrary::ParseFragmentResolved(const FString
 			}
 
 			const FString rawInner = InFragment.Mid(openEnd + 1, innerEnd - (openEnd + 1));
-			// strip any nested markup from the inner text for display
-			innerText = ParseFragmentResolved(rawInner, InResolver).CleanText;
+			// strip any nested markup from the inner text for display; the resolver still
+			// needs the runtime text, which nested replacements would otherwise overwrite
+			const FProsettaParseResult inner = ParseFragmentResolved(rawInner, InResolver);
+			innerText = inner.CleanText;
+			runtimeText = inner.bHasTags ? StripTags(rawInner) : innerText;
 			nextCursor = afterClose;
 		}
 
-		// resolve the display text: prefer an authoritative replacement, else inner text
-		FString displayText = innerText;
-		InResolver(segment.LineId, displayText);
+		// resolve the display text: prefer an authoritative replacement, else inner text.
+		// The resolver receives the runtime inner text so it can recover inline values.
+		FString displayText = runtimeText;
+		if (!InResolver(segment.LineId, displayText))
+			displayText = MoveTemp(innerText);
+		segment.RuntimeText = MoveTemp(runtimeText);
 
 		segment.StartOffset = clean.Len();
 		segment.Text = displayText;

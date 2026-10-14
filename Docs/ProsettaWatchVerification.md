@@ -13,3 +13,15 @@ An independent read-only agent reviewed the implementation twice. Unsafe uncheck
 A human must accept the actual CLI/plugin pairing in a supported game project, including Play/stop, localization/audio failure preservation, and explicit native import. Windows and UE 5.7 compatibility, compressed-audio FFmpeg setup, and cooked-game playback are not verified by these fixtures. The local UE 5.7 build is blocked by its SDK compatibility check against installed Xcode 27. Do not mark the Unreal pilot milestone accepted from this editor fixture evidence alone.
 
 Removed keys leave the active generation registry. `WatchOwnedRemoval` verifies that an unused owned SoundWave wrapper and its package are physically deleted while unrelated user packages survive. Saved external-reference fixtures retain referenced wrappers; one fixture removes the memory edge after saving to exercise disk-only reference protection. A separate fresh process verifies the deleted package remains absent, retained and unrelated packages exist, and the saved user reference resolves to the same retired identity. Referenced/unconfirmed identities remain editor-only for safe reference preservation and resurrection; external user references may still cook retired content. Cleanup never invokes force deletion, source-file deletion, or reference replacement.
+
+## CLI 0.10.0 watch and inline Ink expressions — October 10, 2026
+
+`python3 Scripts/agent-verify.py` passed 14 `Inkpot.Prosetta` tests and the fresh-process `WatchPersistence` test on macOS/UE 5.8.
+
+- `WatchCLI` covers the 0.10.0 version gate (build metadata, `v` prefix, numeric rather than lexical comparison, prereleases of 0.10.0 rejected), argument construction for `--channel`, `--volumes` and `--no-mirror`, the CLI's own usage rules (fixed tags, multiple latest-release volumes, case-sensitive channel, argument injection), and status reporting for `error`/`blocked`/`status` event codes and the `--json` fatal result.
+- `WatchSidecar` now answers `--version` with `0.10.0` and asserts the launched argument list.
+- `WatchSidecarExit` launches real child processes. It checks that a 0.9.0 CLI is never started with `watch`, and that an exit-code-2 usage error printed to stderr after a valid NDJSON event is reported once the process exits, confirming on macOS that stderr shares the watch pipe.
+- `InlineTemplate.Parse/Extract/Render/Metadata` cover the port of the Prosetta web Inline Ink Player: brace, quote and escape handling; anchored alignment with backtracking and a bounded step budget; ambiguity rejection; per-occurrence values; literal and variable fallback; and nested rendering limits.
+- `InlineTemplate.Story` runs compiled Ink through `UInkpotStory` with a sidecar that uses Engine Sync `id`/`lineId` records. It checks evaluated text for arithmetic, variables, function calls, sequences, a choice, and post-choice state in the default language, Italian, and two placeholder-reordering test languages, plus fallback for a missing language.
+
+The authenticated Prosetta stream was not contacted; a human should still run `Prosetta.Watch.Start` against a real project with CLI 0.10.0.

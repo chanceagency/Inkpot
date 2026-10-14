@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Inkpot/Prosetta/ProsettaTypes.h"
+#include "Inkpot/Prosetta/ProsettaInlineTemplate.h"
 #include "ProsettaLine.generated.h"
 
 /**
@@ -14,6 +15,10 @@
  *
  * The UI layer can render the cleaned fragment text and use the segment list to
  * drive per-line behaviour ( audio, animation cues, speaker attribution etc. ).
+ *
+ * Inline Ink expressions ( e.g. "{2+2}" ) in the authored strings are filled with the
+ * values the Ink runtime emitted for this line, recovered from GetRuntimeText(). Use
+ * RenderTemplate / GetLocalizedText to inject the same values into a translation.
  */
 UCLASS(BlueprintType)
 class INKPOT_API UProsettaLine : public UObject
@@ -33,6 +38,13 @@ public:
 
 	/** Apply the authored metadata resolved for this line's id. */
 	void SetMetadata(const FProsettaLineMetadata& InMetadata, bool bInResolved);
+
+	/**
+	 * SetRuntimeText
+	 * Record the Ink-evaluated text for this segment and the inline expression values
+	 * recovered from it.
+	 */
+	void SetRuntimeText(const FString& InRuntimeText, FProsettaTemplateValues&& InValues);
 
 	/** The 'id' attribute of the source tag (e.g. "023A"). */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
@@ -58,6 +70,40 @@ public:
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
 	const FProsettaLineMetadata& GetMetadata() const;
 
+	/** The text the Ink runtime emitted for this segment, inline expressions evaluated. */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	const FString& GetRuntimeText() const;
+
+	/**
+	 * GetTemplateValue
+	 * The value the runtime emitted for an inline expression of this line's authored
+	 * string ( e.g. "GREAT_MEALS" or "2+2" ). Returns true when one was recovered.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	bool GetTemplateValue(const FString& InExpression, FString& OutValue) const;
+
+	/** All inline expression values recovered for this line. */
+	const FProsettaTemplateValues& GetTemplateValues() const;
+
+	/**
+	 * RenderTemplate
+	 * Render a template for this line ( typically a translation of its authored string )
+	 * with each {expression} replaced by the value the runtime emitted for it, else its
+	 * live value from the story. Returns true when every expression was resolved;
+	 * unresolved expressions are left verbatim in OutText.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
+	bool RenderTemplate(const FString& InTemplate, FString& OutText) const;
+
+	/**
+	 * GetLocalizedText
+	 * The player-facing text for this line in the given language, from the sidecar
+	 * localizations with inline expressions rendered. Falls back to GetText() and
+	 * returns false when no translation exists or one of its expressions is unresolved.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
+	bool GetLocalizedText(const FString& InLanguageCode, FString& OutText) const;
+
 	/** Offset of this segment's text within the cleaned fragment. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
 	int32 GetStartOffset() const;
@@ -72,6 +118,11 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
 	FString Text;
+
+	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
+	FString RuntimeText;
+
+	FProsettaTemplateValues TemplateValues;
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
 	TMap<FName, FString> Attributes;

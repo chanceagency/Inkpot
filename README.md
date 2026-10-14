@@ -17,6 +17,16 @@ The `id` attribute identifies the Prosetta line. Prosetta Line IDs use the [Croc
 
 During playback, Inkpot scans the emitted text for `<prosetta>` tags, removes the tag markup, and returns the remaining player-facing text. It resolves IDs against the story's imported Prosetta sidecar when one is available, using the authored ProseLine string in place of the text inside the tag. If no authored string is available, the tag's inner text is used. Each parsed segment also reports its ID, attributes, chosen text, and that text's offset and length in the cleaned result.
 
+### Inline Ink expressions in sidecar strings
+
+ProseLine strings may contain inline Ink logic, exactly as authored in Prosetta: `I'm a math wiz, {2+2} equals four!`. The Ink runtime has already evaluated that logic in the text it emits (`I'm a math wiz, 4 equals four!`), so Inkpot mirrors the Prosetta web app's Inline Ink Player rather than showing the raw template:
+
+1. The default-language template from the sidecar is aligned against the runtime text inside the `<prosetta>` tag, recovering the value each `{expression}` produced at that moment. Any Ink expression works — arithmetic, variables, function calls, conditionals, sequences such as `{&tick|tock}` — because the values come from the story's own evaluation.
+2. Those values are injected into the chosen template. Translations may reorder, repeat, or omit placeholders; a value is matched by the expression's text (whitespace-normalized), so `{gold * 2}` in Italian receives the same value as `{gold * 2}` in English.
+3. A placeholder that was not recovered (for example a translation that references a variable the default string does not) falls back to live evaluation of literals and story variables.
+
+If any placeholder in a default-language line can be neither recovered nor evaluated live — for example a function call in a sidecar line that is stale and no longer matches the compiled story, or two such placeholders side by side with no literal text between them — the runtime text is shown unchanged, so players never see raw `{...}` template text. A stale line whose placeholders are only literals and story variables still renders from the sidecar with live values, and a stale line without placeholders shows the sidecar string; re-sync to pick up edits made in Ink. `UProsettaLine::GetLocalizedText(LanguageCode, OutText)` renders a translation the same way and falls back to the default-language text when a translation is missing or cannot be resolved. `GetRuntimeText`, `GetTemplateValue`, and `RenderTemplate` expose the raw pieces for custom UI. Templates are parsed once when the sidecar loads; lines without `{` skip all template work.
+
 The parser accepts single-quoted, double-quoted, and unquoted attribute values, as well as self-closing tags. Tag names and the `id` attribute name are matched without regard to case. Nested Prosetta elements are handled by matching their depth. If an opening tag is malformed or has no matching close tag, the unmatched remainder is kept as literal text.
 
 Inkpot is a wrapper for the wonderful narrative scripting language **Ink** developed by [Inkle Studios](https://www.inklestudios.com/ink/).<br>
@@ -28,6 +38,10 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.42.23)
+Inline Ink expressions in sidecar strings (`{2+2}`, `{gold}`, `{double(gold)}`…) now display their evaluated values in the default and translated languages, matching Prosetta's Inline Ink Player.<br>
+Editor watch targets the native `watch` command of Prosetta Sync CLI 0.10.0 or newer (tested with 0.10.0 and 0.11.0): version check before launch, `--channel`, `--volumes` and `--no-mirror` options, event codes and CLI usage errors surfaced through `Prosetta.Watch.Status`.<br>
 
 ### Prosetta-specific changes (1.41.23)
 Native Bound Functions: Prosetta C++ modules ( `namespace Prosetta::Bindings::<Module>` ) and local modules written the same way register with a process-wide native binding registry through generated `<Module>.Bindings.cpp` loaders, and bind to every story's `EXTERNAL`s automatically. See [Docs/NativeBindings.md](Docs/NativeBindings.md).<br>
@@ -302,16 +316,44 @@ under `Saved/Automation/agent-verify`.
 
 ## Watch completed CLI generations in the editor
 
-Use the Prosetta sync CLI version delivering NDJSON event schema 1 (`watch --json`),
-and an existing CLI configuration containing the project token. Keep credentials
-in the CLI configuration; they are never put in Unreal assets. In the Unreal
-Output Log console, start the sidecar with quoted absolute paths:
+The editor watch drives the native `watch` command of **Prosetta Sync CLI 0.10.0
+or newer**; older CLIs are refused before launch. Install the current CLI, or pin
+a specific version with `--version`:
+
+```bash
+curl -fsSL https://downloads.prosetta.studio/cli/install.sh | bash -s -- --version 0.11.0
+```
+
+Run `prosetta-sync init` once so the CLI configuration holds the project token.
+Keep credentials in the CLI configuration; they are never put in Unreal assets.
+In the Unreal Output Log console, start the sidecar with quoted absolute paths:
 
 ```text
 Prosetta.Watch.Start "/absolute/prosetta-sync" "/absolute/prosetta-sync.config.json" "/absolute/ffmpeg"
 Prosetta.Watch.Status
 Prosetta.Watch.Stop
 ```
+
+The default CLI configuration lives at
+`~/Library/Application Support/Prosetta/SyncTool/config.json` on macOS and
+`%APPDATA%\Prosetta\SyncTool\config.json` on Windows. Optional arguments follow
+the paths and map directly to `prosetta-sync watch` options:
+
+| Console option | CLI option | Effect |
+| --- | --- | --- |
+| `--channel=live` (default) | `--channel live` | Import every completed live revision. |
+| `--channel=latest-release` | `--channel latest-release` | Track the newest published release; one volume per watch. |
+| `--volumes=core` or `--volumes=core,side` | `--volumes …` | Scope the watch to volumes. Fixed tags such as `core@1.0` use one-shot `prosetta-sync sync` instead. |
+| `--no-mirror` | `--no-mirror` | Skip the CLI's engine mirror; imports still read the immutable generation. |
+
+`StartWatch(CLIExecutable, ConfigFile, AudioDecoder, Channel, Volumes, bMirror)`
+takes the same options from Blueprints or C++. Invalid options are rejected before
+launch with the CLI's own wording. While watching, `Prosetta.Watch.Status` reports
+the latest CLI event code — `STREAM_RECONNECTING` while the CLI reconnects,
+`GENERATION_RETRY` or `REST_<status>` (for example `REST_401` for a bad token) when
+a generation must be retried, and `blocked` for an unavailable release. If the CLI
+exits, the status keeps its exit code and last diagnostic line; exit code 2 means
+the CLI rejected the watch arguments.
 
 The FFmpeg argument is optional for WAV-only projects. For compressed selected
 voice takes, install FFmpeg for your editor platform and pass its executable
