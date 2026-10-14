@@ -41,7 +41,7 @@ For general support and chat with other users, check out [Inkle's discord](https
 
 ### Prosetta-specific changes (unreleased)
 Inline Ink expressions in sidecar strings (`{2+2}`, `{gold}`, `{double(gold)}`…) now display their evaluated values in the default and translated languages, matching Prosetta's Inline Ink Player.<br>
-Editor watch targets Prosetta Sync CLI 0.10.0's native `watch` command: version check before launch, `--channel`, `--volumes` and `--no-mirror` options, event codes and CLI usage errors surfaced through `Prosetta.Watch.Status`.<br>
+Editor watch targets the native `watch` command of Prosetta Sync CLI 0.10.0 or newer (tested with 0.10.0 and 0.11.0): version check before launch, `--channel`, `--volumes` and `--no-mirror` options, event codes and CLI usage errors surfaced through `Prosetta.Watch.Status`.<br>
 
 ### Prosetta-specific changes (1.41.23)
 Native Bound Functions: Prosetta C++ modules ( `namespace Prosetta::Bindings::<Module>` ) and local modules written the same way register with a process-wide native binding registry through generated `<Module>.Bindings.cpp` loaders, and bind to every story's `EXTERNAL`s automatically. See [Docs/NativeBindings.md](Docs/NativeBindings.md).<br>
@@ -317,10 +317,11 @@ under `Saved/Automation/agent-verify`.
 ## Watch completed CLI generations in the editor
 
 The editor watch drives the native `watch` command of **Prosetta Sync CLI 0.10.0
-or newer**; older CLIs are refused before launch. Install or pin it with:
+or newer**; older CLIs are refused before launch. Install the current CLI, or pin
+a specific version with `--version`:
 
 ```bash
-curl -fsSL https://downloads.prosetta.studio/cli/install.sh | bash -s -- --version 0.10.0
+curl -fsSL https://downloads.prosetta.studio/cli/install.sh | bash -s -- --version 0.11.0
 ```
 
 Run `prosetta-sync init` once so the CLI configuration holds the project token.
