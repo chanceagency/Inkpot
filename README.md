@@ -41,7 +41,7 @@ For general support and chat with other users, check out [Inkle's discord](https
 ## Changelog  
 
 ### Prosetta-specific changes (1.46.23)
-Pause tags: `UInkpotProsettaLibrary::ParsePauseTag`, `FindPauseSeconds` and `GetLinePauseSeconds` (Blueprint-pure) read an Ink line tag `#pause:<seconds>` or its synonym `#wait:<seconds>`, the time to wait after a line finishes (voice and text reveal) before auto-advancing to the next one. The key is case-insensitive, whitespace around the key, colon and value is ignored (`#pause: 0.2`), and the value is a plain non-negative decimal (`0`, `.5`, `1.2`); negative or malformed values are ignored, and when a line has several valid pause tags the last one wins. The rules match the Prosetta web player.<br>
+Pause tags: `UInkpotProsettaLibrary::ParsePauseTag`, `FindPauseSeconds` and `GetLinePauseSeconds` (Blueprint-pure) read an Ink line tag `#pause:<seconds>` or its synonym `#wait:<seconds>`, the time to wait after a line finishes (voice and text reveal) before auto-advancing to the next one. The key is case-insensitive, whitespace around the key, colon and value is ignored (`#pause: 0.2`), as is one leading `#` left on the tag string, and the value is a plain non-negative decimal returned as a double (`0`, `.5`, `1.2`); negative or malformed values are ignored, and when a line has several valid pause tags the last one wins. The rules match the Prosetta web player.<br>
 
 ### Prosetta-specific changes (1.45.23)
 Emission-time variable snapshots are case-sensitive, as Ink variables are: `{Gold}` and `{gold}` keep separate values (`UProsettaLine::FVariableSnapshot`).<br>

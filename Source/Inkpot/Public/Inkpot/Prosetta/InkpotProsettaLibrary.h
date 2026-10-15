@@ -64,14 +64,14 @@ public:
 	 * Parses one Ink line tag of the form "pause:<seconds>" or "wait:<seconds>" ( synonyms ), the
 	 * time a player waits after the line finishes ( voice and text reveal ) before the next line.
 	 * The key matches without regard to case; whitespace around the key, colon and value is
-	 * ignored ( "Pause : 0.2" ). The value must be a plain non-negative decimal: digits with an
-	 * optional fractional part, or a leading '.' ( "0", ".5", "1.2" ). Signs, exponents, a
-	 * trailing '.', units and anything that does not fit in a float are rejected.
+	 * ignored ( "Pause : 0.2" ), and so is one leading '#'. The value must be a plain non-negative
+	 * decimal: digits with an optional fractional part, or a leading '.' ( "0", ".5", "1.2" ).
+	 * Signs, exponents, a trailing '.', units and anything too large for a double are rejected.
 	 * Matches the Prosetta web player's rules.
 	 * @return true and the seconds when the tag is a valid pause tag.
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
-	static bool ParsePauseTag(const FString& Tag, float& OutSeconds);
+	static bool ParsePauseTag(const FString& Tag, double& OutSeconds);
 
 	/**
 	 * FindPauseSeconds
@@ -80,7 +80,7 @@ public:
 	 * @return true when any tag is a valid pause tag.
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
-	static bool FindPauseSeconds(const TArray<FString>& Tags, float& OutSeconds);
+	static bool FindPauseSeconds(const TArray<FString>& Tags, double& OutSeconds);
 
 	/**
 	 * GetLinePauseSeconds
@@ -88,7 +88,7 @@ public:
 	 * call this while the line is the story's current line.
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
-	static bool GetLinePauseSeconds(const UInkpotLine* Line, float& OutSeconds);
+	static bool GetLinePauseSeconds(const UInkpotLine* Line, double& OutSeconds);
 
 	/** The default sync mirror manifest: <Project>/Saved/Prosetta/manifest.json. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")

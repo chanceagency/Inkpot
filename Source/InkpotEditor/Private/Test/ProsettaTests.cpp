@@ -1,6 +1,11 @@
 #if !UE_BUILD_SHIPPING
 
 #include "Misc/AutomationTest.h"
+#include "Engine/Engine.h"
+#include "Asset/InkpotStoryAsset.h"
+#include "Inkpot/Inkpot.h"
+#include "Inkpot/InkpotLine.h"
+#include "Inkpot/InkpotStory.h"
 #include "Inkpot/Prosetta/InkpotProsettaLibrary.h"
 #include "Inkpot/Prosetta/ProsettaMetadata.h"
 #include "Inkpot/Prosetta/ProsettaLine.h"
@@ -239,34 +244,43 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaPauseTagTest, "Inkpot.Prosetta.PauseTa
 
 bool FProsettaPauseTagTest::RunTest(const FString& InParameters)
 {
-	auto Valid = [this](const TCHAR* InTag, float InExpected)
+	auto Valid = [this](const TCHAR* InTag, double InExpected)
 	{
-		float seconds = -1.f;
+		double seconds = -1.0;
 		if (TestTrue(FString::Printf(TEXT("'%s' parses"), InTag), UInkpotProsettaLibrary::ParsePauseTag(InTag, seconds)))
 			TestEqual(FString::Printf(TEXT("'%s' seconds"), InTag), seconds, InExpected);
 	};
 	auto Invalid = [this](const TCHAR* InTag)
 	{
-		float seconds = 7.f;
+		double seconds = 7.0;
 		TestFalse(FString::Printf(TEXT("'%s' rejected"), InTag), UInkpotProsettaLibrary::ParsePauseTag(InTag, seconds));
-		TestEqual(FString::Printf(TEXT("'%s' leaves output alone"), InTag), seconds, 7.f);
+		TestEqual(FString::Printf(TEXT("'%s' leaves output alone"), InTag), seconds, 7.0);
 	};
 
 	// pause and wait are synonyms, matched without regard to case.
-	Valid(TEXT("pause:0.2"), 0.2f);
-	Valid(TEXT("wait:1.5"), 1.5f);
-	Valid(TEXT("PAUSE:2"), 2.f);
-	Valid(TEXT("Wait:3"), 3.f);
+	Valid(TEXT("pause:0.2"), 0.2);
+	Valid(TEXT("wait:1.5"), 1.5);
+	Valid(TEXT("PAUSE:2"), 2.0);
+	Valid(TEXT("Wait:3"), 3.0);
+	// One leading '#' is tolerated, as the web player strips it.
+	Valid(TEXT("#pause:1"), 1.0);
+	Valid(TEXT("#WAIT : .25"), 0.25);
 	// Whitespace around the key, colon and value is ignored.
-	Valid(TEXT("pause: 0.2"), 0.2f);
-	Valid(TEXT("pause :0.2"), 0.2f);
-	Valid(TEXT("  wait  :  .5  "), 0.5f);
-	Valid(TEXT("pause:\t1"), 1.f);
+	Valid(TEXT("pause: 0.2"), 0.2);
+	Valid(TEXT("pause :0.2"), 0.2);
+	Valid(TEXT("  wait  :  .5  "), 0.5);
+	Valid(TEXT("pause:\t1"), 1.0);
 	// Plain non-negative decimals, including zero and a bare fraction.
-	Valid(TEXT("pause:0"), 0.f);
-	Valid(TEXT("pause:.5"), 0.5f);
-	Valid(TEXT("pause:007"), 7.f);
-	Valid(TEXT("pause:12.25"), 12.25f);
+	Valid(TEXT("pause:0"), 0.0);
+	Valid(TEXT("pause:.5"), 0.5);
+	Valid(TEXT("pause:007"), 7.0);
+	Valid(TEXT("pause:12.25"), 12.25);
+	// Anything finite as a double, like the web's Number, even past float range.
+	{
+		double seconds = -1.0;
+		TestTrue(TEXT("1e39 parses"), UInkpotProsettaLibrary::ParsePauseTag(*(FString(TEXT("pause:1")) + FString::ChrN(39, TEXT('0'))), seconds));
+		TestTrue(TEXT("1e39 seconds"), FMath::IsNearlyEqual(seconds, 1e39, 1e25));
+	}
 
 	// Everything else falls back to the default gap.
 	Invalid(TEXT("pause:-1"));
@@ -287,24 +301,52 @@ bool FProsettaPauseTagTest::RunTest(const FString& InParameters)
 	Invalid(TEXT("pause"));
 	Invalid(TEXT("pauses:1"));
 	Invalid(TEXT("delay:1"));
-	Invalid(TEXT("#pause:1"));
+	Invalid(TEXT("##pause:1"));
+	Invalid(TEXT(" #pause:1"));
 	Invalid(TEXT(""));
 	Invalid(*(FString(TEXT("pause:")) + FString::ChrN(400, TEXT('9'))));
 
 	// A line's tags: invalid pause tags are skipped and the last valid one wins.
-	float seconds = -1.f;
+	double seconds = -1.0;
 	TestFalse(TEXT("no tags"), UInkpotProsettaLibrary::FindPauseSeconds({}, seconds));
 	TestFalse(TEXT("unrelated tags"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("speaker:QUEEN"), TEXT("mood: calm") }, seconds));
 	TestTrue(TEXT("one pause among others"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("speaker:QUEEN"), TEXT("wait: 0.75") }, seconds));
-	TestEqual(TEXT("one pause seconds"), seconds, 0.75f);
+	TestEqual(TEXT("one pause seconds"), seconds, 0.75);
 	TestTrue(TEXT("last valid wins"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("pause:1"), TEXT("WAIT:2"), TEXT("pause:-3"), TEXT("wait:oops") }, seconds));
-	TestEqual(TEXT("last valid seconds"), seconds, 2.f);
+	TestEqual(TEXT("last valid seconds"), seconds, 2.0);
 	TestTrue(TEXT("later valid overrides earlier"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("wait:5"), TEXT("pause:0") }, seconds));
-	TestEqual(TEXT("zero override"), seconds, 0.f);
-	seconds = 9.f;
+	TestEqual(TEXT("zero override"), seconds, 0.0);
+	seconds = 9.0;
 	TestFalse(TEXT("only invalid pauses"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("pause:-1"), TEXT("wait:") }, seconds));
-	TestEqual(TEXT("only invalid leaves output alone"), seconds, 9.f);
+	TestEqual(TEXT("only invalid leaves output alone"), seconds, 9.0);
 	TestFalse(TEXT("null line"), UInkpotProsettaLibrary::GetLinePauseSeconds(nullptr, seconds));
+
+	// Through a story: tags compiled from Ink reach the parser for the current line.
+	//   First line. #speaker:QUEEN #pause:1 #wait: 0.25
+	//   Second line. #pause:oops
+	//   Third line.
+	const FString compiled = TEXT(R"JSON({"inkVersion":21,"root":[["^First line. ","#","^speaker:QUEEN ","/#","#","^pause:1 ","/#","#","^wait: 0.25","/#","\n","^Second line. ","#","^pause:oops","/#","\n","^Third line.","\n",["done",{"#n":"g-0"}],null],"done",null],"listDefs":{}})JSON");
+	UInkpot* inkpot = GEngine ? GEngine->GetEngineSubsystem<UInkpot>() : nullptr;
+	if (!TestNotNull(TEXT("inkpot subsystem"), inkpot))
+		return false;
+	UInkpotStoryAsset* asset = NewObject<UInkpotStoryAsset>(GetTransientPackage(), NAME_None, RF_Transient);
+	asset->SetCompiledJSON(compiled);
+	UInkpotStory* story = inkpot->BeginStory(asset);
+	if (!TestNotNull(TEXT("story began"), story))
+		return false;
+
+	story->Continue();
+	seconds = -1.0;
+	TestTrue(TEXT("first line pauses"), UInkpotProsettaLibrary::GetLinePauseSeconds(story->GetCurrentLine(), seconds));
+	TestEqual(TEXT("first line: last valid tag wins"), seconds, 0.25);
+	story->Continue();
+	seconds = -1.0;
+	TestFalse(TEXT("second line: invalid pause ignored"), UInkpotProsettaLibrary::GetLinePauseSeconds(story->GetCurrentLine(), seconds));
+	TestEqual(TEXT("second line leaves output alone"), seconds, -1.0);
+	story->Continue();
+	TestFalse(TEXT("third line has no pause"), UInkpotProsettaLibrary::GetLinePauseSeconds(story->GetCurrentLine(), seconds));
+
+	inkpot->EndStory(story);
 	return true;
 }
 

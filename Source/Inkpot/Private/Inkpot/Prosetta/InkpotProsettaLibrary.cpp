@@ -229,17 +229,19 @@ FString UInkpotProsettaLibrary::ProvenanceToLogString(const FProsettaStoryProven
 	return Provenance.ToLogString();
 }
 
-bool UInkpotProsettaLibrary::ParsePauseTag(const FString& Tag, float& OutSeconds)
+bool UInkpotProsettaLibrary::ParsePauseTag(const FString& Tag, double& OutSeconds)
 {
+	// One leading '#' is tolerated, as the web player's parseInkTag strips it.
+	const FString tag = Tag.StartsWith(TEXT("#"), ESearchCase::CaseSensitive) ? Tag.Mid(1) : Tag;
 	int32 colon = INDEX_NONE;
-	if (!Tag.FindChar(TEXT(':'), colon))
+	if (!tag.FindChar(TEXT(':'), colon))
 		return false;
-	const FString key = Tag.Left(colon).TrimStartAndEnd();
+	const FString key = tag.Left(colon).TrimStartAndEnd();
 	if (!key.Equals(TEXT("pause"), ESearchCase::IgnoreCase) && !key.Equals(TEXT("wait"), ESearchCase::IgnoreCase))
 		return false;
 
 	// Grammar: \d*\.?\d+ ( at least one digit, and a '.' must be followed by one ).
-	const FString value = Tag.Mid(colon + 1).TrimStartAndEnd();
+	const FString value = tag.Mid(colon + 1).TrimStartAndEnd();
 	int32 digitsBefore = 0, digitsAfter = 0;
 	bool bDot = false;
 	for (const TCHAR c : value)
@@ -254,19 +256,20 @@ bool UInkpotProsettaLibrary::ParsePauseTag(const FString& Tag, float& OutSeconds
 	if (bDot ? digitsAfter == 0 : digitsBefore == 0)
 		return false;
 
-	const float seconds = static_cast<float>(FCString::Atod(*value));
-	if (!FMath::IsFinite(seconds) || seconds < 0.f)
+	// A double, like the web's Number: only values too large for a double are rejected.
+	const double seconds = FCString::Atod(*value);
+	if (!FMath::IsFinite(seconds))
 		return false;
 	OutSeconds = seconds;
 	return true;
 }
 
-bool UInkpotProsettaLibrary::FindPauseSeconds(const TArray<FString>& Tags, float& OutSeconds)
+bool UInkpotProsettaLibrary::FindPauseSeconds(const TArray<FString>& Tags, double& OutSeconds)
 {
 	bool bFound = false;
 	for (const FString& tag : Tags)
 	{
-		float seconds = 0.f;
+		double seconds = 0.0;
 		if (ParsePauseTag(tag, seconds))
 		{
 			OutSeconds = seconds;
@@ -276,7 +279,7 @@ bool UInkpotProsettaLibrary::FindPauseSeconds(const TArray<FString>& Tags, float
 	return bFound;
 }
 
-bool UInkpotProsettaLibrary::GetLinePauseSeconds(const UInkpotLine* Line, float& OutSeconds)
+bool UInkpotProsettaLibrary::GetLinePauseSeconds(const UInkpotLine* Line, double& OutSeconds)
 {
 	return Line && Line->GetStory() && FindPauseSeconds(Line->GetTags(), OutSeconds);
 }
