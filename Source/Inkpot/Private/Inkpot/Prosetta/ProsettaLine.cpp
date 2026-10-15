@@ -51,25 +51,28 @@ namespace
 	// Matches the template renderer's nesting limit.
 	constexpr int32 GMaxSnapshotDepth = 12;
 
-	void SnapshotTemplateVariables(const FString& InTemplate, FProsettaInlineTemplate::FVariableResolver InResolver, int32 InDepth, TMap<FString, FString>& OutSnapshot)
+	// Freezes one variable's value. A string value that is itself a template renders
+	// nested, so its variables are frozen too; those values are the only templates parsed
+	// here, the line's own were parsed when the sidecar loaded.
+	void SnapshotVariable(FStringView InName, FProsettaInlineTemplate::FVariableResolver InResolver, int32 InDepth, UProsettaLine::FVariableSnapshot& OutSnapshot)
 	{
-		if (InDepth > GMaxSnapshotDepth || !FProsettaInlineTemplate::MayContainExpressions(InTemplate))
+		if (InDepth > GMaxSnapshotDepth)
+			return;
+		FString name(InName);
+		if (OutSnapshot.Contains(name))
+			return;
+		FString value;
+		if (!InResolver(InName, value))
+			return;
+		OutSnapshot.Add(MoveTemp(name), value);
+		if (!FProsettaInlineTemplate::MayContainExpressions(value))
 			return;
 
-		const FProsettaInlineTemplate parsed(InTemplate);
+		const FProsettaInlineTemplate parsed(value, FProsettaInlineTemplate::EUsage::RenderOnly);
 		for (const FStringView expression : parsed.GetExpressions())
 		{
-			if (!FProsettaInlineTemplate::IsIdentifierExpression(expression))
-				continue;
-			const FString name(expression);
-			if (OutSnapshot.Contains(name))
-				continue;
-			FString value;
-			if (!InResolver(expression, value))
-				continue;
-			OutSnapshot.Add(name, value);
-			// A string value that is itself a template renders nested; freeze its variables too.
-			SnapshotTemplateVariables(value, InResolver, InDepth + 1, OutSnapshot);
+			if (FProsettaInlineTemplate::IsIdentifierExpression(expression))
+				SnapshotVariable(expression, InResolver, InDepth + 1, OutSnapshot);
 		}
 	}
 }
@@ -77,9 +80,8 @@ namespace
 void UProsettaLine::CaptureVariables(FProsettaInlineTemplate::FVariableResolver InResolver)
 {
 	VariableSnapshot.Reset();
-	SnapshotTemplateVariables(Metadata.String, InResolver, 0, VariableSnapshot);
-	for (const TPair<FString, FString>& localization : Metadata.Localizations)
-		SnapshotTemplateVariables(localization.Value, InResolver, 0, VariableSnapshot);
+	for (const FString& name : Metadata.VariableNames)
+		SnapshotVariable(name, InResolver, 0, VariableSnapshot);
 }
 
 const FString& UProsettaLine::GetRuntimeText() const

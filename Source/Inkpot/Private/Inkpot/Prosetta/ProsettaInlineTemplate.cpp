@@ -5,6 +5,7 @@
 #include "Ink/VariableState.h"
 #include "Misc/Optional.h"
 #include "String/Find.h"
+#include <atomic>
 
 namespace
 {
@@ -17,6 +18,10 @@ namespace
 	// template ). Ink never re-renders a value, but the Prosetta web player does
 	// ( renderRuntimeValue ), and lines must render the same in both.
 	constexpr int32 GMaxRecursionDepth = 12;
+
+	// Diagnostic only: sidecar templates parse once at load, so a per-line hot path that
+	// parses is a regression the tests catch by watching this.
+	std::atomic<uint64> GParseCount { 0 };
 
 	// Upper bound on literal alignment attempts, guarding pathological inputs.
 	constexpr int32 GMaxAlignmentSteps = 16384;
@@ -473,8 +478,14 @@ FStringView FProsettaInlineTemplate::SegmentView(const FSegment& InSegment) cons
 	return FStringView(Source).Mid(InSegment.Start, InSegment.Len);
 }
 
+uint64 FProsettaInlineTemplate::GetParseCount()
+{
+	return GParseCount.load(std::memory_order_relaxed);
+}
+
 void FProsettaInlineTemplate::Parse()
 {
+	GParseCount.fetch_add(1, std::memory_order_relaxed);
 	FRawSegments raw;
 	bHasEscapes = false;
 	SplitSegments(Source, raw, &bHasEscapes);

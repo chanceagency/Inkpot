@@ -64,6 +64,13 @@ public:
 	/** The parsed authoritative string for a line id, or nullptr when it has no {expressions}. */
 	const FProsettaInlineTemplate* FindTemplate(FName InLineId) const;
 
+	/**
+	 * CollectVariableNames
+	 * Fill InOutMetadata.VariableNames from its String and Localizations. LoadFromJSON does
+	 * this for every line it reads; call it for metadata assembled by hand.
+	 */
+	static void CollectVariableNames(FProsettaLineMetadata& InOutMetadata);
+
 	/** Number of lines loaded. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
 	int32 Num() const;

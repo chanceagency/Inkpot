@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.44.23** of the plugin.</br>
+This is version **1.45.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -26,7 +26,7 @@ ProseLine strings may contain inline Ink logic, exactly as authored in Prosetta:
 3. A placeholder that was not recovered (for example a translation that references a variable the default string does not, or adjacent placeholders such as `{hero}{title}`) falls back to the value its variable had when the line was emitted — every variable placeholder in the default string and its translations is captured then — and otherwise to live evaluation of literals and story variables. A line re-presented after a language switch therefore never shows values the story set later.
 4. As in the web player, a live string value that is itself a template (`VAR greeting = "Hi {hero}"`) is rendered in turn; recovered values are final text and are never re-rendered. As in Ink, `\{` and `\}` are literal braces, so `Type \{gold}` displays `Type {gold}`.
 
-If any placeholder in a default-language line can be neither recovered nor evaluated live — for example a function call in a sidecar line that is stale and no longer matches the compiled story, or two such placeholders side by side with no literal text between them — the runtime text is shown unchanged, so players never see raw `{...}` template text. A stale line whose placeholders are only literals and story variables still renders from the sidecar with live values, and a stale line without placeholders shows the sidecar string; re-sync to pick up edits made in Ink. `UProsettaLine::GetLocalizedText(LanguageCode, OutText)` renders a translation the same way — language codes match regardless of case and `_`/`-` (`pt_BR` finds `pt-br`), falling back through parent codes (`fr-CA` finds `fr`, `zh-hant-tw` finds `zh-hant` then `zh`) — and falls back to the default-language text when a translation is missing or cannot be resolved. `GetRuntimeText`, `GetTemplateValue`, and `RenderTemplate` expose the raw pieces for custom UI. Templates are parsed once when the sidecar loads; lines without `{` skip all template work.
+If any placeholder in a default-language line can be neither recovered nor evaluated live — for example a function call in a sidecar line that is stale and no longer matches the compiled story, or two such placeholders side by side with no literal text between them — the runtime text is shown unchanged, so players never see raw `{...}` template text. A stale line whose placeholders are only literals and story variables still renders from the sidecar with live values, and a stale line without placeholders shows the sidecar string; re-sync to pick up edits made in Ink. `UProsettaLine::GetLocalizedText(LanguageCode, OutText)` renders a translation the same way — language codes match regardless of case and `_`/`-` (`pt_BR` finds `pt-br`), falling back through parent codes (`fr-CA` finds `fr`, `zh-hant-tw` finds `zh-hant` then `zh`) — and falls back to the default-language text when a translation is missing or cannot be resolved. `GetRuntimeText`, `GetTemplateValue`, and `RenderTemplate` expose the raw pieces for custom UI. Templates, and the variable names each line and its translations reference, are parsed once when the sidecar loads; lines without `{` skip all template work.
 
 The parser accepts single-quoted, double-quoted, and unquoted attribute values, as well as self-closing tags. Tag names and the `id` attribute name are matched without regard to case. Nested Prosetta elements are handled by matching their depth. If an opening tag is malformed or has no matching close tag, the unmatched remainder is kept as literal text.
 
@@ -39,6 +39,11 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.45.23)
+Emission-time variable snapshots are case-sensitive, as Ink variables are: `{Gold}` and `{gold}` keep separate values (`UProsettaLine::FVariableSnapshot`).<br>
+Each line's variable names are collected once when the sidecar loads (`FProsettaLineMetadata::VariableNames`, `UProsettaMetadata::CollectVariableNames`), so emitting a line no longer parses its string and every translation; only string values that are themselves templates are parsed at emission. `FProsettaInlineTemplate::GetParseCount` lets tests confirm the hot path parses nothing.<br>
+`Inkpot.Prosetta.NativeBindings.Runtime` no longer logs an unexpected "already bound" warning.<br>
 
 ### Prosetta-specific changes (1.44.23)
 Placeholders the runtime text cannot recover (adjacent placeholders such as `{hero}{title}`, or variables only a translation uses) render with the values their variables had when the line was emitted, so a line shown again after a language switch never picks up values the story set later (`UProsettaLine::CaptureVariables`).<br>
