@@ -64,8 +64,9 @@ public:
 	 * Parses one Ink line tag of the form "pause:<seconds>" or "wait:<seconds>" ( synonyms ), the
 	 * time a player waits after the line finishes ( voice and text reveal ) before the next line.
 	 * The key matches without regard to case; whitespace around the key, colon and value is
-	 * ignored ( "Pause : 0.2" ), and so is one leading '#'. The value must be a plain non-negative
-	 * decimal: digits with an optional fractional part, or a leading '.' ( "0", ".5", "1.2" ).
+	 * ignored ( "Pause : 0.2" ), and so is a '#' that is the tag's very first character ( " #pause:1"
+	 * is rejected ). The value must be a plain non-negative decimal: digits with an optional
+	 * fractional part, or a leading '.' ( "0", ".5", "1.2" ).
 	 * Signs, exponents, a trailing '.', units and anything too large for a double are rejected.
 	 * Matches the Prosetta web player's rules.
 	 * @return true and the seconds when the tag is a valid pause tag.

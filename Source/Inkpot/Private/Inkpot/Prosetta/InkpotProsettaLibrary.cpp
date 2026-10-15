@@ -232,32 +232,32 @@ FString UInkpotProsettaLibrary::ProvenanceToLogString(const FProsettaStoryProven
 bool UInkpotProsettaLibrary::ParsePauseTag(const FString& Tag, double& OutSeconds)
 {
 	// One leading '#' is tolerated, as the web player's parseInkTag strips it.
-	const FString tag = Tag.StartsWith(TEXT("#"), ESearchCase::CaseSensitive) ? Tag.Mid(1) : Tag;
+	FStringView tag(Tag);
+	if (tag.StartsWith(TEXT('#')))
+		tag.RightChopInline(1);
 	int32 colon = INDEX_NONE;
 	if (!tag.FindChar(TEXT(':'), colon))
 		return false;
-	const FString key = tag.Left(colon).TrimStartAndEnd();
+	const FStringView key = tag.Left(colon).TrimStartAndEnd();
 	if (!key.Equals(TEXT("pause"), ESearchCase::IgnoreCase) && !key.Equals(TEXT("wait"), ESearchCase::IgnoreCase))
 		return false;
 
-	// Grammar: \d*\.?\d+ ( at least one digit, and a '.' must be followed by one ).
-	const FString value = tag.Mid(colon + 1).TrimStartAndEnd();
-	int32 digitsBefore = 0, digitsAfter = 0;
+	// Grammar: \d*\.?\d+ ( digits with at most one '.', ending in a digit ).
+	const FStringView value = tag.RightChop(colon + 1).TrimStartAndEnd();
+	auto isDigit = [](TCHAR c) { return c >= TEXT('0') && c <= TEXT('9'); };
+	if (value.IsEmpty() || !isDigit(value[value.Len() - 1]))
+		return false;
 	bool bDot = false;
 	for (const TCHAR c : value)
 	{
-		if (c >= TEXT('0') && c <= TEXT('9'))
-			(bDot ? digitsAfter : digitsBefore)++;
-		else if (c == TEXT('.') && !bDot)
+		if (c == TEXT('.') && !bDot)
 			bDot = true;
-		else
+		else if (!isDigit(c))
 			return false;
 	}
-	if (bDot ? digitsAfter == 0 : digitsBefore == 0)
-		return false;
 
 	// A double, like the web's Number: only values too large for a double are rejected.
-	const double seconds = FCString::Atod(*value);
+	const double seconds = FCString::Atod(*FString(value));
 	if (!FMath::IsFinite(seconds))
 		return false;
 	OutSeconds = seconds;
