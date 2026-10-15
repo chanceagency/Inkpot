@@ -129,7 +129,8 @@ bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FSt
  LaunchChannel = Channel;
  LaunchDecoder = AudioDecoder;
  FPlatformProcess::CreatePipe(VersionReadPipe, VersionWritePipe);
- VersionProcess = FPlatformProcess::CreateProc(*CLIExecutable, TEXT("--version"), false, true, true, nullptr, 0, nullptr, VersionWritePipe);
+ // stdout only: stderr notices ( .NET first-run, runtime warnings ) must not precede the version line.
+ VersionProcess = FPlatformProcess::CreateProc(*CLIExecutable, TEXT("--version"), false, true, true, nullptr, 0, nullptr, VersionWritePipe, nullptr, nullptr);
  if (!VersionProcess.IsValid()) { CancelVersionCheck(); Status = TEXT("Unable to run the CLI version check."); return false; }
  VersionStarted = FPlatformTime::Seconds();
  Status = TEXT("Checking Prosetta Sync CLI version.");
@@ -146,18 +147,23 @@ void UProsettaWatchSubsystem::PollVersionCheck()
   if (FPlatformTime::Seconds() - VersionStarted < VersionCheckTimeoutSeconds) return;
   CancelVersionCheck();
   Status = FString::Printf(TEXT("Prosetta Sync CLI did not answer --version within %.0f s; watch not started."), VersionCheckTimeoutSeconds);
-  return;
  }
- int32 exitCode = -1;
- FPlatformProcess::GetProcReturnCode(VersionProcess, &exitCode);
- const FString version = VersionOutput.TrimStartAndEnd();
- CancelVersionCheck();
- if (exitCode != 0 || !IsSupportedCLIVersion(version))
+ else
  {
-  Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.Left(64));
-  return;
+  int32 exitCode = -1;
+  FPlatformProcess::GetProcReturnCode(VersionProcess, &exitCode);
+  // IsSupportedCLIVersion reads the first line, so that is the version reported.
+  FString version = VersionOutput.TrimStartAndEnd();
+  int32 newline;
+  if (version.FindChar(TEXT('\n'), newline)) version = version.Left(newline).TrimEnd();
+  CancelVersionCheck();
+  if (exitCode != 0 || !IsSupportedCLIVersion(version))
+   Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.Left(64));
+  else
+   LaunchWatch(version);
  }
- LaunchWatch(version);
+ // StartWatch returned before this outcome, so Prosetta.Watch.Start never logged it.
+ UE_LOG(LogTemp, Display, TEXT("Prosetta: %s"), *Status);
 }
 void UProsettaWatchSubsystem::CancelVersionCheck()
 {
@@ -231,10 +237,12 @@ FString UProsettaWatchSubsystem::SelectDiagnostic(const FString& Current, const 
 {
  const FString line = RawLine.TrimStartAndEnd();
  if (line.IsEmpty() || line.StartsWith(TEXT("Run prosetta-sync --help"))) return Current;
- // .NET stack frames and trace markers ( "   at X.Y()", "--- End of stack trace ---" ) are never the message.
- if (line.StartsWith(TEXT("at ")) || line.StartsWith(TEXT("--- End of"))) return Current;
+ // .NET stack frames ( always indented, "   at X.Y()" ) and trace markers ( "--- End of stack trace ---" ) are never
+ // the message; an unindented "At least one volume ..." is.
+ const bool bIndented = FChar::IsWhitespace(RawLine[0]);
+ if ((bIndented && line.StartsWith(TEXT("at "), ESearchCase::CaseSensitive)) || line.StartsWith(TEXT("--- End of"), ESearchCase::CaseSensitive)) return Current;
  // Other indented lines continue the block whose first line is already kept ( e.g. " ---> inner" ).
- if (!Current.IsEmpty() && FChar::IsWhitespace(RawLine[0])) return Current;
+ if (!Current.IsEmpty() && bIndented) return Current;
  return line.Left(512);
 }
 void UProsettaWatchSubsystem::StopWatch()

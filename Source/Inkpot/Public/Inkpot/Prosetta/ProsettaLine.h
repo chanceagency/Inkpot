@@ -100,9 +100,10 @@ public:
 	 * The player-facing text for this line in the given language, from the sidecar
 	 * localizations with inline expressions rendered. Language codes are matched case
 	 * and separator insensitively ( "pt_BR", "pt-br" and "PT-BR" are one language ),
-	 * and a regional code with no translation of its own falls back to its base
-	 * language ( "pt-br" to "pt" ). Falls back to GetText() and returns false when no
-	 * translation exists or one of its expressions is unresolved.
+	 * and a regional code with no translation of its own falls back through its
+	 * parents ( "pt-br" to "pt", "zh-hant-tw" to "zh-hant" to "zh" ). Falls back to
+	 * GetText() and returns false when no translation exists or one of its
+	 * expressions is unresolved.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
 	bool GetLocalizedText(const FString& InLanguageCode, FString& OutText) const;

@@ -42,7 +42,7 @@ For general support and chat with other users, check out [Inkle's discord](https
 ### Prosetta-specific changes (unreleased)
 Editor watch checks the CLI version without blocking the editor: `--version` runs in the background (30 s timeout) and watch launches once it passes, so `StartWatch` / `Prosetta.Watch.Start` return at once with a "Checking Prosetta Sync CLI version" status.<br>
 A CLI that crashes with a .NET exception reports the exception message instead of its last stack frame.<br>
-`UProsettaLine::GetLocalizedText` matches language codes case and separator insensitively (`pt_BR`, `pt-br`, `PT-BR`) and falls back from a region to its base language (`pt-br` to `pt`).<br>
+`UProsettaLine::GetLocalizedText` matches language codes case and separator insensitively (`pt_BR`, `pt-br`, `PT-BR`) and falls back through parent codes (`pt-br` to `pt`, `zh-hant-tw` to `zh-hant` to `zh`).<br>
 Render-only inline templates (translations, nested values) no longer build the alignment used to recover runtime values.<br>
 
 ### Prosetta-specific changes (1.42.23)

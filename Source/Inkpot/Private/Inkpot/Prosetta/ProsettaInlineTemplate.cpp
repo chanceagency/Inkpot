@@ -338,10 +338,7 @@ FProsettaInlineTemplate::FProsettaInlineTemplate(FString InSource, EUsage InUsag
 	{
 		Parse();
 		if (InUsage == EUsage::ExtractAndRender)
-		{
 			BuildAlignment(Alignment);
-			bAligned = true;
-		}
 	}
 }
 
@@ -520,9 +517,9 @@ bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsetta
 
 	// Render-only templates build the alignment on demand.
 	FAlignment built;
-	if (!bAligned)
+	if (!IsAligned())
 		BuildAlignment(built);
-	const FAlignment& alignment = bAligned ? Alignment : built;
+	const FAlignment& alignment = IsAligned() ? Alignment : built;
 
 	const int32 numCaptures = alignment.ExpressionIndices.Num();
 	if (numCaptures == 0)

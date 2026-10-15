@@ -190,6 +190,8 @@ bool FProsettaLocalizedLanguageCodeTest::RunTest(const FString& InParameters)
 	metadata.Localizations.Add(TEXT("FR-ca"), TEXT("Bonjour du Quebec"));
 	metadata.Localizations.Add(TEXT("de-DE"), TEXT("{2+2} Euro"));
 	metadata.Localizations.Add(TEXT("it-IT"), TEXT(""));
+	metadata.Localizations.Add(TEXT("zh_Hant"), TEXT("Ni hao ( traditional )"));
+	metadata.Localizations.Add(TEXT("zh-Hans"), TEXT("Ni hao ( simplified )"));
 
 	UProsettaLine* line = NewObject<UProsettaLine>(GetTransientPackage());
 	line->Initialise(TEXT("0001"), TEXT("Hello"), {}, 0, 5);
@@ -213,6 +215,10 @@ bool FProsettaLocalizedLanguageCodeTest::RunTest(const FString& InParameters)
 	Localized(TEXT("pt-PT"), TEXT("Ola de Portugal"), true);
 	Localized(TEXT("es_MX"), TEXT("Hola"), true);
 	Localized(TEXT("fr_CA"), TEXT("Bonjour du Quebec"), true);
+	// Script and region subtags fall back through each parent, not straight to the language.
+	Localized(TEXT("zh-Hant-TW"), TEXT("Ni hao ( traditional )"), true);
+	Localized(TEXT("zh_hans_CN"), TEXT("Ni hao ( simplified )"), true);
+	Localized(TEXT("zh"), TEXT("Hello"), false);
 	// A base request does not guess between regions.
 	Localized(TEXT("fr"), TEXT("Hello"), false);
 	// Normalised matches still render inline expressions.

@@ -441,6 +441,7 @@ bool FProsettaWatchCLITest::RunTest(const FString& InParameters)
  TestEqual(TEXT("help hint ignored"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT("Bad option."), TEXT("Run prosetta-sync --help for usage.")), FString(TEXT("Bad option.")));
  TestEqual(TEXT("frame alone is not a diagnostic"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT(""), TEXT("   at X.Y()")), FString());
  TestEqual(TEXT("indented first line kept"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT(""), TEXT("  warning: slow disk")), FString(TEXT("warning: slow disk")));
+ TestEqual(TEXT("unindented 'At' message is not a frame"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT(""), TEXT("At least one volume is required.")), FString(TEXT("At least one volume is required.")));
 
  // Arguments mirror the CLI's usage checks ( which otherwise exit with code 2 ).
  FString arguments, error;
@@ -623,8 +624,9 @@ bool FProsettaSidecarExitTest::RunTest(const FString& InParameters)
  }));
  AddCommand(WaitForStatus(this, watch, TEXT("CLI rejected the watch arguments: Watch each latest-release volume with its own cache."), [watch]() { watch->StopWatch(); }));
 
- // An unhandled .NET exception reports its message, not the last stack frame.
- const FString crashing = WriteCLIScript(root, TEXT("crashing-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.11.0; exit 0; fi\n")
+ // An unhandled .NET exception reports its message, not the last stack frame. Its `--version` also
+ // prints a stderr notice first, which must not be read as the version.
+ const FString crashing = WriteCLIScript(root, TEXT("crashing-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 'Welcome to .NET!' >&2; echo 0.11.0; exit 0; fi\n")
   TEXT("echo 'Unhandled exception. System.InvalidOperationException: Project token missing.' >&2\n")
   TEXT("echo ' ---> System.IO.IOException: Token file locked.' >&2\n")
   TEXT("echo '   at Prosetta.Sync.Program.Main(String[] args) in /src/Program.cs:line 42' >&2\n")
@@ -635,11 +637,12 @@ bool FProsettaSidecarExitTest::RunTest(const FString& InParameters)
   TestTrue(TEXT("crashing CLI starts"), watch->StartWatch(crashing, config, TEXT("")));
   return true;
  }));
- AddCommand(WaitForStatus(this, watch, TEXT("CLI exited with code 1"), [this, watch]()
+ AddCommand(WaitForStatus(this, watch, TEXT("CLI exited with code 1"), [this, watch, root]()
  {
   TestTrue(TEXT("exception message surfaced"), watch->GetStatus().Contains(TEXT("code 1: Unhandled exception. System.InvalidOperationException: Project token missing.")));
   TestFalse(TEXT("stack frame not surfaced"), watch->GetStatus().Contains(TEXT("Program.")));
   watch->StopWatch();
+  IFileManager::Get().DeleteDirectory(*root, false, true);
  }));
  return true;
 }
@@ -702,9 +705,10 @@ bool FProsettaWatchVersionCheckTest::RunTest(const FString& InParameters)
   TestFalse(TEXT("stop cancels the check"), watch->IsCheckingVersion());
   return true;
  }));
- AddCommand(new FProsettaWaitCommand([]() { return false; }, [this, launched](bool)
+ AddCommand(new FProsettaWaitCommand([]() { return false; }, [this, launched, root](bool)
  {
   TestFalse(TEXT("cancelled check never launches watch"), FPaths::FileExists(launched));
+  IFileManager::Get().DeleteDirectory(*root, false, true);
  }, 3));
  return true;
 }

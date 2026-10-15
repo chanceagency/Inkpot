@@ -1,6 +1,24 @@
 #include "Inkpot/Prosetta/ProsettaLine.h"
 #include "Inkpot/InkpotStory.h"
 
+namespace
+{
+	// True when InKey normalises ( UProsettaLine::NormalizeLanguageCode ) to InNormalized, without allocating.
+	bool LanguageCodeEquals(FStringView InKey, FStringView InNormalized)
+	{
+		InKey = InKey.TrimStartAndEnd();
+		if (InKey.Len() != InNormalized.Len())
+			return false;
+		for (int32 i = 0; i < InKey.Len(); ++i)
+		{
+			const TCHAR ch = InKey[i] == TEXT('_') ? TEXT('-') : FChar::ToLower(InKey[i]);
+			if (ch != InNormalized[i])
+				return false;
+		}
+		return true;
+	}
+}
+
 void UProsettaLine::Initialise(FName InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength)
 {
 	LineId = InLineId;
@@ -73,21 +91,20 @@ const FString* UProsettaLine::FindLocalization(const FString& InLanguageCode) co
 	if (exact && !exact->IsEmpty())
 		return exact;
 
-	// A regional request ( "pt-br" ) falls back to its base language ( "pt" ).
-	int32 dash;
-	const FString base = requested.FindChar(TEXT('-'), dash) ? requested.Left(dash) : FString();
-	const FString* baseMatch = nullptr;
-	for (const TPair<FString, FString>& pair : Metadata.Localizations)
+	// A regional request falls back through its parents ( "zh-hant-tw" to "zh-hant" to "zh" ).
+	FStringView code(requested);
+	for (;;)
 	{
-		if (pair.Value.IsEmpty())
-			continue;
-		const FString key = NormalizeLanguageCode(pair.Key);
-		if (key == requested)
-			return &pair.Value;
-		if (!baseMatch && !base.IsEmpty() && key == base)
-			baseMatch = &pair.Value;
+		for (const TPair<FString, FString>& pair : Metadata.Localizations)
+		{
+			if (!pair.Value.IsEmpty() && LanguageCodeEquals(pair.Key, code))
+				return &pair.Value;
+		}
+		int32 dash;
+		if (!code.FindLastChar(TEXT('-'), dash) || dash == 0)
+			return nullptr;
+		code.LeftInline(dash);
 	}
-	return baseMatch;
 }
 
 bool UProsettaLine::GetLocalizedText(const FString& InLanguageCode, FString& OutText) const

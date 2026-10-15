@@ -89,7 +89,7 @@ public:
 	int32 NumExpressions() const { return ExpressionCount; }
 
 	/** True when the alignment ExtractValues uses was built at construction. */
-	bool IsAligned() const { return bAligned; }
+	bool IsAligned() const { return !Alignment.Literals.IsEmpty(); }
 
 	/** The trimmed text of each expression placeholder, in source order. */
 	TArray<FStringView, TInlineAllocator<8>> GetExpressions() const;
@@ -141,5 +141,4 @@ private:
 	TArray<FString, TInlineAllocator<8>> ExpressionKeys;
 	FAlignment Alignment;
 	int32 ExpressionCount = 0;
-	bool bAligned = false;
 };
