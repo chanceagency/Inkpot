@@ -49,13 +49,21 @@ namespace
 		}
 	}
 
-	void AppendLocalizationVariableNames(const FProsettaLineMetadata& InMetadata, TArray<FString>& OutNames)
+	// Fills InOutMetadata.VariableNames from its String and Localizations. InParsedString is
+	// String already parsed by the caller, or nullptr to parse it here.
+	void FillVariableNames(FProsettaLineMetadata& InOutMetadata, const FProsettaInlineTemplate* InParsedString)
 	{
-		for (const TPair<FString, FString>& localization : InMetadata.Localizations)
+		InOutMetadata.VariableNames.Reset();
+		if (InParsedString)
+			AppendVariableNames(*InParsedString, InOutMetadata.VariableNames);
+		else if (FProsettaInlineTemplate::MayContainExpressions(InOutMetadata.String))
+			AppendVariableNames(FProsettaInlineTemplate(InOutMetadata.String, FProsettaInlineTemplate::EUsage::RenderOnly), InOutMetadata.VariableNames);
+		for (const TPair<FString, FString>& localization : InOutMetadata.Localizations)
 		{
 			if (FProsettaInlineTemplate::MayContainExpressions(localization.Value))
-				AppendVariableNames(FProsettaInlineTemplate(localization.Value, FProsettaInlineTemplate::EUsage::RenderOnly), OutNames);
+				AppendVariableNames(FProsettaInlineTemplate(localization.Value, FProsettaInlineTemplate::EUsage::RenderOnly), InOutMetadata.VariableNames);
 		}
+		InOutMetadata.bVariableNamesCollected = true;
 	}
 }
 
@@ -121,15 +129,15 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 	for (TPair<FName, FProsettaLineMetadata>& pair : Lines)
 	{
 		FProsettaLineMetadata& meta = pair.Value;
-		meta.VariableNames.Reset();
-		if (FProsettaInlineTemplate::MayContainExpressions(meta.String))
+		if (!FProsettaInlineTemplate::MayContainExpressions(meta.String))
 		{
-			FProsettaInlineTemplate parsed(meta.String);
-			AppendVariableNames(parsed, meta.VariableNames);
-			if (parsed.NeedsRendering())
-				Templates.Add(pair.Key, MoveTemp(parsed));
+			FillVariableNames(meta, nullptr);
+			continue;
 		}
-		AppendLocalizationVariableNames(meta, meta.VariableNames);
+		FProsettaInlineTemplate parsed(meta.String);
+		FillVariableNames(meta, &parsed);
+		if (parsed.NeedsRendering())
+			Templates.Add(pair.Key, MoveTemp(parsed));
 	}
 
 	return Lines.Num() > 0;
@@ -189,10 +197,7 @@ const FProsettaInlineTemplate* UProsettaMetadata::FindTemplate(FName InLineId) c
 
 void UProsettaMetadata::CollectVariableNames(FProsettaLineMetadata& InOutMetadata)
 {
-	InOutMetadata.VariableNames.Reset();
-	if (FProsettaInlineTemplate::MayContainExpressions(InOutMetadata.String))
-		AppendVariableNames(FProsettaInlineTemplate(InOutMetadata.String, FProsettaInlineTemplate::EUsage::RenderOnly), InOutMetadata.VariableNames);
-	AppendLocalizationVariableNames(InOutMetadata, InOutMetadata.VariableNames);
+	FillVariableNames(InOutMetadata, nullptr);
 }
 
 int32 UProsettaMetadata::Num() const

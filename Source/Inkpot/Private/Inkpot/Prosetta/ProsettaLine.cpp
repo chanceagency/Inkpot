@@ -1,5 +1,6 @@
 #include "Inkpot/Prosetta/ProsettaLine.h"
 #include "Inkpot/InkpotStory.h"
+#include "Inkpot/Prosetta/ProsettaMetadata.h"
 
 namespace
 {
@@ -34,9 +35,9 @@ void UProsettaLine::Initialise(FName InLineId, const FString& InText, const TMap
 	Length = InLength;
 }
 
-void UProsettaLine::SetMetadata(const FProsettaLineMetadata& InMetadata, bool bInResolved)
+void UProsettaLine::SetMetadata(FProsettaLineMetadata InMetadata, bool bInResolved)
 {
-	Metadata = InMetadata;
+	Metadata = MoveTemp(InMetadata);
 	bResolved = bInResolved;
 }
 
@@ -80,6 +81,8 @@ namespace
 void UProsettaLine::CaptureVariables(FProsettaInlineTemplate::FVariableResolver InResolver)
 {
 	VariableSnapshot.Reset();
+	if (!Metadata.bVariableNamesCollected)
+		UProsettaMetadata::CollectVariableNames(Metadata);
 	for (const FString& name : Metadata.VariableNames)
 		SnapshotVariable(name, InResolver, 0, VariableSnapshot);
 }

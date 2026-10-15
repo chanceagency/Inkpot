@@ -45,7 +45,7 @@ public:
 	void Initialise(FName InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength);
 
 	/** Apply the authored metadata resolved for this line's id. */
-	void SetMetadata(const FProsettaLineMetadata& InMetadata, bool bInResolved);
+	void SetMetadata(FProsettaLineMetadata InMetadata, bool bInResolved);
 
 	/**
 	 * SetRuntimeText
@@ -58,7 +58,7 @@ public:
 	 * CaptureVariables
 	 * Snapshot the current value of every variable placeholder ( e.g. "{hero}" ) in the
 	 * authored string and its localizations ( FProsettaLineMetadata::VariableNames, collected
-	 * when the sidecar loaded ), including variables referenced by string values that are
+	 * when the sidecar loaded, or here for metadata assembled by hand ), including variables referenced by string values that are
 	 * themselves templates. Call at emission, after SetMetadata, so a placeholder the runtime
 	 * text could not recover ( "{hero}{title}", or a variable only a translation uses ) still
 	 * renders with emission-time values after the story moves on.

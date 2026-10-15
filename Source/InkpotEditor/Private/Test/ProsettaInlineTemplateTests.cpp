@@ -561,6 +561,16 @@ bool FProsettaInlineTemplateLineSnapshotTest::RunTest(const FString& InParameter
 	line->SetRuntimeText(TEXT("AdaSir waves."), MoveTemp(values));
 	line->CaptureVariables(resolver);
 
+	// Metadata assembled by hand without CollectVariableNames is collected at emission.
+	FProsettaLineMetadata uncollected = metadata;
+	uncollected.VariableNames.Reset();
+	uncollected.bVariableNamesCollected = false;
+	UProsettaLine* handBuilt = NewObject<UProsettaLine>();
+	handBuilt->Initialise(metadata.LineId, TEXT("AdaSir waves."), {}, 0, 13);
+	handBuilt->SetMetadata(uncollected, true);
+	handBuilt->CaptureVariables(resolver);
+	TestEqual(TEXT("hand-built names collected at emission"), handBuilt->GetMetadata().VariableNames.Num(), 6);
+
 	// The story moves on before the line is re-presented in another language.
 	variables[TEXT("hero")] = TEXT("Bea");
 	variables[TEXT("title")] = TEXT("Dame");
@@ -577,6 +587,8 @@ bool FProsettaInlineTemplateLineSnapshotTest::RunTest(const FString& InParameter
 	// Variables differing only in case keep separate snapshot values.
 	TestTrue(TEXT("case-sensitive variables"), line->GetLocalizedText(TEXT("es"), localized));
 	TestEqual(TEXT("case-sensitive emission-time values"), localized, TEXT("9 y 7, Ada."));
+	TestTrue(TEXT("hand-built line"), handBuilt->GetLocalizedText(TEXT("it"), localized));
+	TestEqual(TEXT("hand-built emission-time values"), localized, TEXT("SirAda saluta, glad."));
 
 	// Language codes match regardless of case and separator, then fall back to the base language.
 	TestTrue(TEXT("underscore and case"), line->GetLocalizedText(TEXT("pt_br"), localized));

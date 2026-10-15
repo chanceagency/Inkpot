@@ -67,7 +67,8 @@ public:
 	/**
 	 * CollectVariableNames
 	 * Fill InOutMetadata.VariableNames from its String and Localizations. LoadFromJSON does
-	 * this for every line it reads; call it for metadata assembled by hand.
+	 * this for every line it reads; UProsettaLine::CaptureVariables does it for metadata
+	 * assembled by hand that has not been collected yet.
 	 */
 	static void CollectVariableNames(FProsettaLineMetadata& InOutMetadata);
 

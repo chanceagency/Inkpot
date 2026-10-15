@@ -46,6 +46,9 @@ struct INKPOT_API FProsettaLineMetadata
 	 */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
 	TArray<FString> VariableNames;
+
+	/** True once VariableNames has been collected; metadata assembled by hand is collected at emission. */
+	bool bVariableNamesCollected = false;
 };
 
 /**

@@ -61,7 +61,7 @@ void UInkpotLine::Initialise(const FString &InString)
 
 		FProsettaLineMetadata lineMetadata;
 		const bool bResolved = metadata && metadata->Resolve(segment.LineId, lineMetadata);
-		line->SetMetadata(lineMetadata, bResolved);
+		line->SetMetadata(MoveTemp(lineMetadata), bResolved);
 		line->CaptureVariables(variableResolver);
 
 		FProsettaTemplateValues values;
