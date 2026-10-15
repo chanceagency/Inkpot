@@ -281,5 +281,5 @@ bool UInkpotProsettaLibrary::FindPauseSeconds(const TArray<FString>& Tags, doubl
 
 bool UInkpotProsettaLibrary::GetLinePauseSeconds(const UInkpotLine* Line, double& OutSeconds)
 {
-	return Line && Line->GetStory() && FindPauseSeconds(Line->GetTags(), OutSeconds);
+	return Line && FindPauseSeconds(Line->GetTags(), OutSeconds);
 }

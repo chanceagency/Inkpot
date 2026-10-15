@@ -321,7 +321,7 @@ bool FProsettaPauseTagTest::RunTest(const FString& InParameters)
 	TestEqual(TEXT("only invalid leaves output alone"), seconds, 9.0);
 	TestFalse(TEXT("null line"), UInkpotProsettaLibrary::GetLinePauseSeconds(nullptr, seconds));
 
-	// Through a story: tags compiled from Ink reach the parser for the current line.
+	// Through a story: tags compiled from Ink reach the parser, line by line.
 	//   First line. #speaker:QUEEN #pause:1 #wait: 0.25
 	//   Second line. #pause:oops
 	//   Third line.
@@ -336,15 +336,31 @@ bool FProsettaPauseTagTest::RunTest(const FString& InParameters)
 		return false;
 
 	story->Continue();
+	UInkpotLine* first = story->GetCurrentLine();
 	seconds = -1.0;
-	TestTrue(TEXT("first line pauses"), UInkpotProsettaLibrary::GetLinePauseSeconds(story->GetCurrentLine(), seconds));
+	TestTrue(TEXT("first line pauses"), UInkpotProsettaLibrary::GetLinePauseSeconds(first, seconds));
 	TestEqual(TEXT("first line: last valid tag wins"), seconds, 0.25);
 	story->Continue();
+	UInkpotLine* second = story->GetCurrentLine();
 	seconds = -1.0;
-	TestFalse(TEXT("second line: invalid pause ignored"), UInkpotProsettaLibrary::GetLinePauseSeconds(story->GetCurrentLine(), seconds));
+	TestFalse(TEXT("second line: invalid pause ignored"), UInkpotProsettaLibrary::GetLinePauseSeconds(second, seconds));
 	TestEqual(TEXT("second line leaves output alone"), seconds, -1.0);
+
+	// A line keeps its own tags. Callers ask for the pause late, once the line's voice and
+	// text reveal have finished; by then the story may have continued ( another flow, or
+	// ContinueMaximally ) and its current tags belong to a newer line. Reading those would
+	// pace this line with the newer line's #pause, or none, without any error.
+	seconds = -1.0;
+	TestTrue(TEXT("held first line still pauses after the story moved on"), UInkpotProsettaLibrary::GetLinePauseSeconds(first, seconds));
+	TestEqual(TEXT("held first line keeps its own pause"), seconds, 0.25);
+	TestEqual(TEXT("held first line keeps its own tags"), first->GetTags().Num(), 3);
+	TestEqual(TEXT("second line has its own tags"), second->GetTags().Num(), 1);
+
 	story->Continue();
 	TestFalse(TEXT("third line has no pause"), UInkpotProsettaLibrary::GetLinePauseSeconds(story->GetCurrentLine(), seconds));
+	seconds = -1.0;
+	TestTrue(TEXT("held first line still pauses after a line with no tags"), UInkpotProsettaLibrary::GetLinePauseSeconds(first, seconds));
+	TestEqual(TEXT("held first line pause after a line with no tags"), seconds, 0.25);
 
 	inkpot->EndStory(story);
 	return true;

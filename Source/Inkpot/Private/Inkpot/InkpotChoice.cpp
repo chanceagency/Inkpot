@@ -8,7 +8,8 @@ UInkpotChoice::UInkpotChoice()
 void UInkpotChoice::Initialise( TSharedPtr<Ink::FChoice> InInkChoice )
 {
 	InkChoice = InInkChoice;
-	UInkpotLine::Initialise( InkChoice->GetText() );
+	// A choice reads its tags from InkChoice ( GetTagsInternal ), so none are copied here.
+	UInkpotLine::Initialise( InkChoice->GetText(), {} );
 }
 
 int32 UInkpotChoice::GetIndex() const

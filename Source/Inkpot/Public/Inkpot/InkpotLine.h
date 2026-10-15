@@ -13,7 +13,13 @@ class INKPOT_API UInkpotLine : public UObject
 
 public:
 	UInkpotLine();
-	void Initialise(const FString &String);
+
+	/**
+	 * Initialise
+	 * @param String The line's text as the runtime emitted it.
+	 * @param Tags The line's tags, copied so the line keeps them after the story moves on.
+	 */
+	void Initialise(const FString &String, const TArray<FString> &Tags);
 
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	const FString& GetString() const;
@@ -42,6 +48,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	const FText& GetText() const;
 
+	/**
+	 * GetTags
+	 * The tags of this line, as they were when the line was created. They are a copy, not
+	 * the story's current tags: a line kept after the story continues, switches flow or runs
+	 * ContinueMaximally still reports its own tags ( e.g. its #pause ), not the newer line's.
+	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	const TArray<FString> &GetTags() const;
 
@@ -66,6 +78,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Line")
 	FText Text;
+
+	UPROPERTY(VisibleAnywhere, Category="Inkpot|Line")
+	TArray<FString> Tags;
 
 	UPROPERTY(VisibleAnywhere, Category = "Inkpot|Line")
 	bool bIsDirty;

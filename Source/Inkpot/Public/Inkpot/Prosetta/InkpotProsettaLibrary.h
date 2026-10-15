@@ -85,8 +85,9 @@ public:
 
 	/**
 	 * GetLinePauseSeconds
-	 * FindPauseSeconds over a line's tags. Line tags are read from the story's current tags, so
-	 * call this while the line is the story's current line.
+	 * FindPauseSeconds over a line's tags. A line keeps the tags it was created with, so this
+	 * can be asked late, e.g. once the line's voice and text reveal finish, and still answers
+	 * for that line even if the story has moved on.
 	 */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
 	static bool GetLinePauseSeconds(const UInkpotLine* Line, double& OutSeconds);
