@@ -58,14 +58,10 @@ public:
 
 	/**
 	 * FindLocalization
-	 * The sidecar translation for a language code, matched case-insensitively with '_'
-	 * and '-' equivalent ( "pt_BR" finds "pt-br" ), falling back to the base language
-	 * ( "fr-CA" finds "fr" ). Returns nullptr when there is no non-empty translation.
+	 * The non-empty sidecar translation for a language code, matched as GetLocalizedText
+	 * does ( case and '_' / '-' insensitive, falling back through parent codes ), or nullptr.
 	 */
 	const FString* FindLocalization(const FString& InLanguageCode) const;
-
-	/** Lowercases a language code, trims it and uses '-' as the region separator. */
-	static FString NormalizeLanguageCode(const FString& InLanguageCode);
 
 	/** The 'id' attribute of the source tag (e.g. "023A"). */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
@@ -119,11 +115,19 @@ public:
 	/**
 	 * GetLocalizedText
 	 * The player-facing text for this line in the given language, from the sidecar
-	 * localizations ( see FindLocalization ) with inline expressions rendered. Falls back to GetText() and
-	 * returns false when no translation exists or one of its expressions is unresolved.
+	 * localizations with inline expressions rendered. Language codes are matched case
+	 * and separator insensitively ( "pt_BR", "pt-br" and "PT-BR" are one language ),
+	 * and a regional code with no translation of its own falls back through its
+	 * parents ( "pt-br" to "pt", "zh-hant-tw" to "zh-hant" to "zh" ). Falls back to
+	 * GetText() and returns false when no translation exists or one of its
+	 * expressions is unresolved.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
 	bool GetLocalizedText(const FString& InLanguageCode, FString& OutText) const;
+
+	/** Canonical language code: trimmed, lowercase, '_' replaced by '-' ( "pt_BR" -> "pt-br" ). */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static FString NormalizeLanguageCode(const FString& InLanguageCode);
 
 	/** Offset of this segment's text within the cleaned fragment. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")

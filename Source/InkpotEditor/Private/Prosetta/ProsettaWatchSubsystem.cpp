@@ -11,6 +11,7 @@
 #include "Misc/PackageName.h"
 #include "Misc/SecureHash.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformTime.h"
 #include "Editor.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Factories/SoundFactory.h"
@@ -122,58 +123,70 @@ bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FSt
  { Status = TEXT("Watch requires absolute CLI and configuration file paths."); return false; }
  FString arguments, error;
  if (!BuildWatchArguments(ConfigFile, Channel, Volumes, bMirror, arguments, error)) { Status = error; return false; }
- FString version;
- const bool bProbed = ProbeCLIVersion(CLIExecutable, CLIVersionProbeTimeoutSeconds, version);
- if (!bProbed && version.IsEmpty())
- {
-  Status = FString::Printf(TEXT("Prosetta Sync CLI did not report a version within %.0f seconds."), CLIVersionProbeTimeoutSeconds);
-  return false;
- }
- if (!bProbed || !IsSupportedCLIVersion(version))
- {
-  Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.TrimStartAndEnd().Left(64));
-  return false;
- }
- Decoder = AudioDecoder;
- FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
- Process = FPlatformProcess::CreateProc(*CLIExecutable, *arguments, false, true, true, nullptr, 0, nullptr, WritePipe);
- if (!Process.IsValid()) { StopWatch(); Status = TEXT("Unable to launch CLI watch."); return false; }
- Status = FString::Printf(TEXT("Watching %s (CLI %s); waiting for a complete generation."), *Channel, *version.TrimStartAndEnd());
+ // `--version` runs alongside the editor: a cold .NET start must not freeze the game thread.
+ LaunchExecutable = CLIExecutable;
+ LaunchArguments = arguments;
+ LaunchChannel = Channel;
+ LaunchDecoder = AudioDecoder;
+ FPlatformProcess::CreatePipe(VersionReadPipe, VersionWritePipe);
+ // stdout only: stderr notices ( .NET first-run, runtime warnings ) must not precede the version line.
+ VersionProcess = FPlatformProcess::CreateProc(*CLIExecutable, TEXT("--version"), false, true, true, nullptr, 0, nullptr, VersionWritePipe, nullptr, nullptr);
+ if (!VersionProcess.IsValid()) { CancelVersionCheck(); Status = TEXT("Unable to run the CLI version check."); return false; }
+ VersionStarted = FPlatformTime::Seconds();
+ Status = TEXT("Checking Prosetta Sync CLI version.");
  return true;
 }
-bool UProsettaWatchSubsystem::ProbeCLIVersion(const FString& CLIExecutable, double TimeoutSeconds, FString& OutVersion)
+void UProsettaWatchSubsystem::PollVersionCheck()
 {
- // Runs on the editor thread, so the wait is bounded: a CLI that hangs ( a stalled
- // network mount, a wrapper prompting for input ) is killed rather than freezing the editor.
- OutVersion.Reset();
- void* readPipe = nullptr;
- void* writePipe = nullptr;
- if (!FPlatformProcess::CreatePipe(readPipe, writePipe)) return false;
- FProcHandle probe = FPlatformProcess::CreateProc(*CLIExecutable, TEXT("--version"), false, true, true, nullptr, 0, nullptr, writePipe);
- if (!probe.IsValid()) { FPlatformProcess::ClosePipe(readPipe, writePipe); return false; }
- FString output;
- const double deadline = FPlatformTime::Seconds() + TimeoutSeconds;
- bool bExited = false;
- while (!(bExited = !FPlatformProcess::IsProcRunning(probe)) && FPlatformTime::Seconds() < deadline)
+ // Observe the exit before draining so the final output is never lost.
+ const bool bExited = !FPlatformProcess::IsProcRunning(VersionProcess);
+ VersionOutput += FPlatformProcess::ReadPipe(VersionReadPipe);
+ if (VersionOutput.Len() > 4096) VersionOutput.LeftInline(4096);
+ if (!bExited)
  {
-  output += FPlatformProcess::ReadPipe(readPipe);
-  FPlatformProcess::Sleep(0.01f);
- }
- int32 exitCode = -1;
- if (bExited)
- {
-  output += FPlatformProcess::ReadPipe(readPipe);
-  FPlatformProcess::GetProcReturnCode(probe, &exitCode);
+  if (FPlatformTime::Seconds() - VersionStarted < VersionCheckTimeoutSeconds) return;
+  CancelVersionCheck();
+  Status = FString::Printf(TEXT("Prosetta Sync CLI did not answer --version within %.0f s; watch not started."), VersionCheckTimeoutSeconds);
  }
  else
  {
-  FPlatformProcess::TerminateProc(probe, true);
+  int32 exitCode = -1;
+  FPlatformProcess::GetProcReturnCode(VersionProcess, &exitCode);
+  // IsSupportedCLIVersion reads the first line, so that is the version reported.
+  FString version = VersionOutput.TrimStartAndEnd();
+  int32 newline;
+  if (version.FindChar(TEXT('\n'), newline)) version = version.Left(newline).TrimEnd();
+  CancelVersionCheck();
+  // A failed `--version` ( missing .NET runtime, crash ) is not an old CLI; say so rather than "found ''".
+  if (exitCode != 0)
+   Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; `--version` exited with code %d."), MinimumCLIVersionText, exitCode);
+  else if (!IsSupportedCLIVersion(version))
+   Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.Left(64));
+  else
+   LaunchWatch(version);
  }
- FPlatformProcess::CloseProc(probe);
- FPlatformProcess::ClosePipe(readPipe, writePipe);
- if (!bExited) return false;
- OutVersion = output;
- return exitCode == 0;
+ // StartWatch returned before this outcome, so Prosetta.Watch.Start never logged it.
+ UE_LOG(LogTemp, Display, TEXT("Prosetta: %s"), *Status);
+}
+void UProsettaWatchSubsystem::CancelVersionCheck()
+{
+ if (VersionProcess.IsValid())
+ {
+  if (FPlatformProcess::IsProcRunning(VersionProcess)) FPlatformProcess::TerminateProc(VersionProcess, true);
+  FPlatformProcess::CloseProc(VersionProcess);
+  VersionProcess.Reset();
+ }
+ FPlatformProcess::ClosePipe(VersionReadPipe, VersionWritePipe);
+ VersionReadPipe = VersionWritePipe = nullptr;
+ VersionOutput.Empty();
+}
+void UProsettaWatchSubsystem::LaunchWatch(const FString& Version)
+{
+ Decoder = LaunchDecoder;
+ FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
+ Process = FPlatformProcess::CreateProc(*LaunchExecutable, *LaunchArguments, false, true, true, nullptr, 0, nullptr, WritePipe);
+ if (!Process.IsValid()) { StopWatch(); Status = TEXT("Unable to launch CLI watch."); return; }
+ Status = FString::Printf(TEXT("Watching %s (CLI %s); waiting for a complete generation."), *LaunchChannel, *Version);
 }
 bool UProsettaWatchSubsystem::BuildWatchArguments(const FString& ConfigFile, const FString& Channel, const FString& Volumes, bool bMirror, FString& OutArguments, FString& OutError)
 {
@@ -223,8 +236,21 @@ bool UProsettaWatchSubsystem::IsSupportedCLIVersion(const FString& VersionOutput
  // A prerelease of the minimum ( 0.10.0-rc.1 ) predates the release that shipped watch.
  return prerelease.IsEmpty();
 }
+FString UProsettaWatchSubsystem::SelectDiagnostic(const FString& Current, const FString& RawLine)
+{
+ const FString line = RawLine.TrimStartAndEnd();
+ if (line.IsEmpty() || line.StartsWith(TEXT("Run prosetta-sync --help"))) return Current;
+ // .NET stack frames ( always indented, "   at X.Y()" ) and trace markers ( "--- End of stack trace ---" ) are never
+ // the message; an unindented "At least one volume ..." is.
+ const bool bIndented = FChar::IsWhitespace(RawLine[0]);
+ if ((bIndented && line.StartsWith(TEXT("at "), ESearchCase::CaseSensitive)) || line.StartsWith(TEXT("--- End of"), ESearchCase::CaseSensitive)) return Current;
+ // Other indented lines continue the block whose first line is already kept ( e.g. " ---> inner" ).
+ if (!Current.IsEmpty() && bIndented) return Current;
+ return line.Left(512);
+}
 void UProsettaWatchSubsystem::StopWatch()
 {
+ CancelVersionCheck();
  if (Process.IsValid()) { FPlatformProcess::TerminateProc(Process, true); FPlatformProcess::CloseProc(Process); Process.Reset(); }
  FPlatformProcess::ClosePipe(ReadPipe, WritePipe);
  ReadPipe = WritePipe = nullptr;
@@ -239,17 +265,19 @@ void UProsettaWatchSubsystem::ConsumeOutput(bool bFlush)
  int32 newline;
  while (Buffer.FindChar(TEXT('\n'), newline))
  {
-  const FString line = Buffer.Left(newline).TrimStartAndEnd();
+  const FString raw = Buffer.Left(newline);
+  const FString line = raw.TrimStartAndEnd();
   Buffer.RightChopInline(newline + 1);
   if (line.IsEmpty()) continue;
   // stderr shares the pipe: usage errors and fatal messages are plain text, not NDJSON.
   if (line.StartsWith(TEXT("{"))) ConsumeEvent(line);
-  else if (!line.StartsWith(TEXT("Run prosetta-sync --help"))) LastDiagnostic = line.Left(512);
+  else LastDiagnostic = SelectDiagnostic(LastDiagnostic, raw);
  }
  if (Buffer.Len() > 4 * 1024 * 1024) { Buffer.Empty(); Status = TEXT("Rejected oversized sidecar event."); }
 }
 bool UProsettaWatchSubsystem::Tick(float DeltaTime)
 {
+ if (VersionProcess.IsValid()) PollVersionCheck();
  if (ReadPipe)
  {
   const bool bExited = Process.IsValid() && !FPlatformProcess::IsProcRunning(Process);

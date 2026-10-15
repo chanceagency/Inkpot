@@ -363,13 +363,14 @@ const FProsettaTemplateValues::FEntry* FProsettaTemplateValues::Find(FStringView
 	return nullptr;
 }
 
-FProsettaInlineTemplate::FProsettaInlineTemplate(FString InSource)
+FProsettaInlineTemplate::FProsettaInlineTemplate(FString InSource, EUsage InUsage)
 	: Source(MoveTemp(InSource))
 {
 	if (MayContainExpressions(Source))
 	{
 		Parse();
-		BuildAlignment();
+		if (InUsage == EUsage::ExtractAndRender)
+			BuildAlignment(Alignment);
 	}
 }
 
@@ -497,9 +498,9 @@ void FProsettaInlineTemplate::Parse()
 	}
 }
 
-void FProsettaInlineTemplate::BuildAlignment()
+void FProsettaInlineTemplate::BuildAlignment(FAlignment& OutAlignment) const
 {
-	Alignment = FAlignment();
+	OutAlignment = FAlignment();
 	if (ExpressionCount == 0)
 		return;
 
@@ -534,8 +535,8 @@ void FProsettaInlineTemplate::BuildAlignment()
 			while (end < len && FChar::IsDigit(normalized[end])) ++end;
 			if (end < len && end > i + 1 && normalized[end] == GSentinelEnd)
 			{
-				Alignment.Literals.Add(FString(FStringView(literal).TrimStartAndEnd()));
-				Alignment.ExpressionIndices.Add(FCString::Atoi(*normalized.Mid(i + 1, end - i - 1)));
+				OutAlignment.Literals.Add(FString(FStringView(literal).TrimStartAndEnd()));
+				OutAlignment.ExpressionIndices.Add(FCString::Atoi(*normalized.Mid(i + 1, end - i - 1)));
 				literal.Reset();
 				i = end;
 				continue;
@@ -543,15 +544,23 @@ void FProsettaInlineTemplate::BuildAlignment()
 		}
 		literal.AppendChar(ch);
 	}
-	Alignment.Literals.Add(FString(FStringView(literal).TrimStartAndEnd()));
+	OutAlignment.Literals.Add(FString(FStringView(literal).TrimStartAndEnd()));
 }
 
 bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsettaTemplateValues& OutValues) const
 {
 	OutValues.Reset();
+	if (ExpressionCount == 0)
+		return false;
 
-	const int32 numCaptures = Alignment.ExpressionIndices.Num();
-	if (ExpressionCount == 0 || numCaptures == 0)
+	// Render-only templates build the alignment on demand.
+	FAlignment built;
+	if (!IsAligned())
+		BuildAlignment(built);
+	const FAlignment& alignment = IsAligned() ? Alignment : built;
+
+	const int32 numCaptures = alignment.ExpressionIndices.Num();
+	if (numCaptures == 0)
 		return false;
 
 	const FString runtime = NormalizeToPlainText(InRuntimeText);
@@ -577,13 +586,13 @@ bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsetta
 		}
 	}
 
-	const FString& first = Alignment.Literals[0];
+	const FString& first = alignment.Literals[0];
 	if (!FStringView(runtime).StartsWith(first, ESearchCase::CaseSensitive))
 		return false;
 
 	FAligner aligner;
 	aligner.Runtime = runtime;
-	aligner.Literals = Alignment.Literals;
+	aligner.Literals = alignment.Literals;
 	aligner.NumCaptures = numCaptures;
 	aligner.Captures.SetNumZeroed(numCaptures);
 	if (!aligner.Match(0, SkipWhitespace(runtime, first.Len())))
@@ -595,12 +604,12 @@ bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsetta
 	{
 		// A placeholder flanked by an interior literal with no anchoring text is
 		// ambiguous ( the shared text cannot be split ), so leave it to live evaluation.
-		const bool bEmptyBefore = k > 0 && Alignment.Literals[k].IsEmpty();
-		const bool bEmptyAfter = k < numCaptures - 1 && Alignment.Literals[k + 1].IsEmpty();
+		const bool bEmptyBefore = k > 0 && alignment.Literals[k].IsEmpty();
+		const bool bEmptyAfter = k < numCaptures - 1 && alignment.Literals[k + 1].IsEmpty();
 		if (bEmptyBefore || bEmptyAfter)
 			continue;
 
-		const int32 expression = Alignment.ExpressionIndices[k];
+		const int32 expression = alignment.ExpressionIndices[k];
 		if (!captured.IsValidIndex(expression))
 			continue;
 
@@ -722,7 +731,7 @@ bool FProsettaInlineTemplate::RenderInternal(const FProsettaTemplateValues* InVa
 		{
 			// A value that is itself a template renders recursively; any placeholder it
 			// leaves unresolved ( or still holds at the depth limit ) fails the line.
-			const FProsettaInlineTemplate nestedTemplate(scratch);
+			const FProsettaInlineTemplate nestedTemplate(scratch, EUsage::RenderOnly);
 			if (InDepth < GMaxRecursionDepth)
 			{
 				FString nested;

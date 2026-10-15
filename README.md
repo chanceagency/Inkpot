@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.41.23** of the plugin.</br>
+This is version **1.44.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -26,7 +26,7 @@ ProseLine strings may contain inline Ink logic, exactly as authored in Prosetta:
 3. A placeholder that was not recovered (for example a translation that references a variable the default string does not, or adjacent placeholders such as `{hero}{title}`) falls back to the value its variable had when the line was emitted — every variable placeholder in the default string and its translations is captured then — and otherwise to live evaluation of literals and story variables. A line re-presented after a language switch therefore never shows values the story set later.
 4. As in the web player, a live string value that is itself a template (`VAR greeting = "Hi {hero}"`) is rendered in turn; recovered values are final text and are never re-rendered. As in Ink, `\{` and `\}` are literal braces, so `Type \{gold}` displays `Type {gold}`.
 
-If any placeholder in a default-language line can be neither recovered nor evaluated live — for example a function call in a sidecar line that is stale and no longer matches the compiled story, or two such placeholders side by side with no literal text between them — the runtime text is shown unchanged, so players never see raw `{...}` template text. A stale line whose placeholders are only literals and story variables still renders from the sidecar with live values, and a stale line without placeholders shows the sidecar string; re-sync to pick up edits made in Ink. `UProsettaLine::GetLocalizedText(LanguageCode, OutText)` renders a translation the same way — language codes match regardless of case and `_`/`-` (`pt_BR` finds `pt-br`), falling back to the base language (`fr-CA` finds `fr`) — and falls back to the default-language text when a translation is missing or cannot be resolved. `GetRuntimeText`, `GetTemplateValue`, and `RenderTemplate` expose the raw pieces for custom UI. Templates are parsed once when the sidecar loads; lines without `{` skip all template work.
+If any placeholder in a default-language line can be neither recovered nor evaluated live — for example a function call in a sidecar line that is stale and no longer matches the compiled story, or two such placeholders side by side with no literal text between them — the runtime text is shown unchanged, so players never see raw `{...}` template text. A stale line whose placeholders are only literals and story variables still renders from the sidecar with live values, and a stale line without placeholders shows the sidecar string; re-sync to pick up edits made in Ink. `UProsettaLine::GetLocalizedText(LanguageCode, OutText)` renders a translation the same way — language codes match regardless of case and `_`/`-` (`pt_BR` finds `pt-br`), falling back through parent codes (`fr-CA` finds `fr`, `zh-hant-tw` finds `zh-hant` then `zh`) — and falls back to the default-language text when a translation is missing or cannot be resolved. `GetRuntimeText`, `GetTemplateValue`, and `RenderTemplate` expose the raw pieces for custom UI. Templates are parsed once when the sidecar loads; lines without `{` skip all template work.
 
 The parser accepts single-quoted, double-quoted, and unquoted attribute values, as well as self-closing tags. Tag names and the `id` attribute name are matched without regard to case. Nested Prosetta elements are handled by matching their depth. If an opening tag is malformed or has no matching close tag, the unmatched remainder is kept as literal text.
 
@@ -40,9 +40,22 @@ For general support and chat with other users, check out [Inkle's discord](https
 
 ## Changelog  
 
+### Prosetta-specific changes (1.44.23)
+Placeholders the runtime text cannot recover (adjacent placeholders such as `{hero}{title}`, or variables only a translation uses) render with the values their variables had when the line was emitted, so a line shown again after a language switch never picks up values the story set later (`UProsettaLine::CaptureVariables`).<br>
+Ink brace escapes `\{`, `\}` and `\\` are literal text, so `Type \{gold}` displays `Type {gold}` instead of a backslash and a value; lines whose only template syntax is an escape are still rendered (`FProsettaInlineTemplate::NeedsRendering`).<br>
+Recovered values are final text and are never re-rendered as templates; live string values that are templates still render nested, matching the Prosetta web player.<br>
+`UProsettaLine::FindLocalization` is public.<br>
+
+### Prosetta-specific changes (1.43.23)
+Editor watch checks the CLI version without blocking the editor: `--version` runs in the background (30 s timeout) and watch launches once it passes, so `StartWatch` / `Prosetta.Watch.Start` return at once with a "Checking Prosetta Sync CLI version" status.<br>
+A CLI that crashes with a .NET exception reports the exception message instead of its last stack frame. A `--version` that fails reports its exit code rather than looking like an old CLI, and stderr notices no longer get in the way of the version check.<br>
+`UProsettaLine::GetLocalizedText` matches language codes case and separator insensitively (`pt_BR`, `pt-br`, `PT-BR`) and falls back through parent codes (`pt-br` to `pt`, `zh-hant-tw` to `zh-hant` to `zh`).<br>
+Render-only inline templates (translations, nested values) no longer build the alignment used to recover runtime values.<br>
+README version line corrected (it still said 1.41.23).<br>
+
 ### Prosetta-specific changes (1.42.23)
 Inline Ink expressions in sidecar strings (`{2+2}`, `{gold}`, `{double(gold)}`…) now display their evaluated values in the default and translated languages, matching Prosetta's Inline Ink Player.<br>
-Editor watch targets the native `watch` command of Prosetta Sync CLI 0.10.0 or newer (tested with 0.10.0 and 0.11.0): version check before launch (bounded to 5 seconds, so a hung CLI cannot freeze the editor), `--channel`, `--volumes` and `--no-mirror` options, event codes and CLI usage errors surfaced through `Prosetta.Watch.Status`.<br>
+Editor watch targets the native `watch` command of Prosetta Sync CLI 0.10.0 or newer (tested with 0.10.0 and 0.11.0): version check before launch, `--channel`, `--volumes` and `--no-mirror` options, event codes and CLI usage errors surfaced through `Prosetta.Watch.Status`.<br>
 
 ### Prosetta-specific changes (1.41.23)
 Native Bound Functions: Prosetta C++ modules ( `namespace Prosetta::Bindings::<Module>` ) and local modules written the same way register with a process-wide native binding registry through generated `<Module>.Bindings.cpp` loaders, and bind to every story's `EXTERNAL`s automatically. See [Docs/NativeBindings.md](Docs/NativeBindings.md).<br>
@@ -318,7 +331,9 @@ under `Saved/Automation/agent-verify`.
 ## Watch completed CLI generations in the editor
 
 The editor watch drives the native `watch` command of **Prosetta Sync CLI 0.10.0
-or newer**; older CLIs are refused before launch. Install the current CLI, or pin
+or newer**; older CLIs are refused before launch. The version check runs in the
+background (`--version`, 30 s timeout), so starting a watch never stalls the
+editor while the CLI cold-starts; `Prosetta.Watch.Status` reports when it passes. Install the current CLI, or pin
 a specific version with `--version`:
 
 ```bash
@@ -353,7 +368,8 @@ launch with the CLI's own wording. While watching, `Prosetta.Watch.Status` repor
 the latest CLI event code — `STREAM_RECONNECTING` while the CLI reconnects,
 `GENERATION_RETRY` or `REST_<status>` (for example `REST_401` for a bad token) when
 a generation must be retried, and `blocked` for an unavailable release. If the CLI
-exits, the status keeps its exit code and last diagnostic line; exit code 2 means
+exits, the status keeps its exit code and last diagnostic message ( the first line
+of an error block, so a .NET exception shows its message, not a stack frame ); exit code 2 means
 the CLI rejected the watch arguments.
 
 The FFmpeg argument is optional for WAV-only projects. For compressed selected

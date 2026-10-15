@@ -22,7 +22,10 @@ public:
  /**
   * Launches `prosetta-sync watch`. Channel is live or latest-release; Volumes is an optional
   * comma separated scope ( one volume only for latest-release, fixed tags must use sync );
-  * bMirror=false passes --no-mirror. The CLI version is checked before launching.
+  * bMirror=false passes --no-mirror. Returns false on a usage error or when the CLI cannot be run.
+  * The CLI version is then checked without blocking the editor ( `--version` is polled from the
+  * ticker, bounded by VersionCheckTimeoutSeconds ) and watch launches once it passes; GetStatus
+  * reports the outcome.
   */
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool StartWatch(const FString& CLIExecutable, const FString& ConfigFile, const FString& AudioDecoder,
   const FString& Channel = TEXT("live"), const FString& Volumes = TEXT(""), bool bMirror = true);
@@ -34,30 +37,42 @@ public:
  UFUNCTION(BlueprintCallable, Category="Prosetta|Watch") bool ImportNativeSources(const FString& Namespace, const FString& Destination, bool bGenerateLoaders = false);
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") FString GetStatus() const { return Status; }
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") int32 GetPendingCount() const { return Pending.Num(); }
+ /** True while StartWatch's `--version` check is still running. */
+ UFUNCTION(BlueprintPure, Category="Prosetta|Watch") bool IsCheckingVersion() const { return VersionProcess.IsValid(); }
  static bool IsSafeToApply();
  /** Validates watch options as the CLI does, building its argument list. Returns false with OutError on a usage error. */
  static bool BuildWatchArguments(const FString& ConfigFile, const FString& Channel, const FString& Volumes, bool bMirror, FString& OutArguments, FString& OutError);
  /** Parses `prosetta-sync --version` output ( e.g. "0.10.0" or "0.10.0+abc" ) and checks it is at least 0.10.0, the first release with watch. */
  static bool IsSupportedCLIVersion(const FString& VersionOutput);
  /**
-  * Runs `<CLI> --version`, waiting at most TimeoutSeconds before killing it. Returns true
-  * when it exited with code 0; OutVersion holds its output whenever it exited in time
-  * and is empty on a timeout or launch failure.
+  * The diagnostic to keep after the CLI printed RawLine ( a non-NDJSON line, untrimmed ). An error
+  * block keeps its first line: indented continuations and .NET stack frames ( "   at ..." ) never
+  * replace a diagnostic, so an unhandled exception reports its message rather than its last frame.
   */
- static bool ProbeCLIVersion(const FString& CLIExecutable, double TimeoutSeconds, FString& OutVersion);
- /** How long StartWatch waits for the CLI version check before giving up. */
- static constexpr double CLIVersionProbeTimeoutSeconds = 5.0;
+ static FString SelectDiagnostic(const FString& Current, const FString& RawLine);
+ /** Seconds StartWatch waits for `--version` before giving up ( the .NET CLI may cold start slowly ). */
+ float VersionCheckTimeoutSeconds = 30.0f;
 private:
  bool Tick(float DeltaTime);
  bool ApplyGeneration(const FString& EventJSON, FString& OutError);
  void ConsumeOutput(bool bFlush);
+ void PollVersionCheck();
+ void CancelVersionCheck();
+ void LaunchWatch(const FString& Version);
  FTSTicker::FDelegateHandle Ticker;
  FProcHandle Process;
  void* ReadPipe = nullptr;
  void* WritePipe = nullptr;
  FString Buffer;
  FString Decoder;
- /** Last non-NDJSON line the CLI printed ( stderr shares the pipe ), reported if it exits. */
+ /** `--version` check started by StartWatch, and the watch it launches once the check passes. */
+ FProcHandle VersionProcess;
+ void* VersionReadPipe = nullptr;
+ void* VersionWritePipe = nullptr;
+ FString VersionOutput;
+ double VersionStarted = 0.0;
+ FString LaunchExecutable, LaunchArguments, LaunchChannel, LaunchDecoder;
+ /** Last meaningful non-NDJSON line the CLI printed ( stderr shares the pipe ), reported if it exits. See SelectDiagnostic. */
  FString LastDiagnostic;
  FString Status = TEXT("Stopped");
  TMap<FString, FString> Pending;

@@ -393,6 +393,56 @@ bool FProsettaInlineTemplateRenderTest::RunTest(const FString& InParameters)
 }
 
 // ---------------------------------------------------------------------------------------
+// Render-only templates skip the alignment ExtractValues needs
+// ---------------------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaInlineTemplateRenderOnlyTest, "Inkpot.Prosetta.InlineTemplate.RenderOnly", ProsettaInlineTemplateTests::Flags)
+
+bool FProsettaInlineTemplateRenderOnlyTest::RunTest(const FString& InParameters)
+{
+	using namespace ProsettaInlineTemplateTests;
+
+	const TCHAR* source = TEXT("<b>{hero}</b> has {gold} gold and {gold * 2} silver.");
+	const TCHAR* runtime = TEXT("<b>Ada</b> has 7 gold and 14 silver.");
+	const FProsettaInlineTemplate aligned(source);
+	const FProsettaInlineTemplate renderOnly(source, FProsettaInlineTemplate::EUsage::RenderOnly);
+
+	TestTrue(TEXT("default usage aligns up front"), aligned.IsAligned());
+	TestFalse(TEXT("render-only skips the alignment"), renderOnly.IsAligned());
+	TestFalse(TEXT("plain text never aligns"), FProsettaInlineTemplate(TEXT("Plain.")).IsAligned());
+	TestEqual(TEXT("render-only parses the same placeholders"), renderOnly.NumExpressions(), aligned.NumExpressions());
+
+	FProsettaTemplateValues values;
+	values.Add(TEXT("hero"), TEXT("Ada"));
+	values.Add(TEXT("gold"), TEXT("7"));
+	values.Add(TEXT("gold * 2"), TEXT("14"));
+	FString alignedOut, renderOnlyOut;
+	TestTrue(TEXT("aligned renders"), aligned.Render(&values, alignedOut));
+	TestTrue(TEXT("render-only renders"), renderOnly.Render(&values, renderOnlyOut));
+	TestEqual(TEXT("render output identical"), renderOnlyOut, alignedOut);
+
+	// ExtractValues still works on a render-only template, building the alignment per call.
+	FProsettaTemplateValues extracted;
+	TestTrue(TEXT("render-only still extracts"), renderOnly.ExtractValues(runtime, extracted));
+	TestEqual(TEXT("render-only hero"), ValueOf(extracted, TEXT("hero")), TEXT("Ada"));
+	TestEqual(TEXT("render-only gold * 2"), ValueOf(extracted, TEXT("gold * 2")), TEXT("14"));
+	TestFalse(TEXT("extracting leaves it render-only"), renderOnly.IsAligned());
+	TestFalse(TEXT("render-only divergence fails"), renderOnly.ExtractValues(TEXT("Something else"), extracted));
+
+	// Nested values ( rendered render-only ) still resolve recursively.
+	auto resolver = [](FStringView InName, FString& OutValue) -> bool
+	{
+		if (InName == TEXTVIEW("greeting")) { OutValue = TEXT("Hello {hero}"); return true; }
+		if (InName == TEXTVIEW("hero")) { OutValue = TEXT("Ada"); return true; }
+		return false;
+	};
+	FString nested;
+	TestTrue(TEXT("nested render-only resolves"), FProsettaInlineTemplate(TEXT("{greeting}!"), FProsettaInlineTemplate::EUsage::RenderOnly).Render(nullptr, resolver, nested));
+	TestEqual(TEXT("nested render-only output"), nested, TEXT("Hello Ada!"));
+	return true;
+}
+
+// ---------------------------------------------------------------------------------------
 // Metadata: authoritative display text for a line
 // ---------------------------------------------------------------------------------------
 
