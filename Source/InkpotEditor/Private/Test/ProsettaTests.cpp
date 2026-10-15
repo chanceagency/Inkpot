@@ -231,4 +231,81 @@ bool FProsettaLocalizedLanguageCodeTest::RunTest(const FString& InParameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaPauseTagTest, "Inkpot.Prosetta.PauseTags",
+	EAutomationTestFlags::EditorContext |
+	EAutomationTestFlags::ClientContext |
+	EAutomationTestFlags::EngineFilter |
+	EAutomationTestFlags::HighPriority)
+
+bool FProsettaPauseTagTest::RunTest(const FString& InParameters)
+{
+	auto Valid = [this](const TCHAR* InTag, float InExpected)
+	{
+		float seconds = -1.f;
+		if (TestTrue(FString::Printf(TEXT("'%s' parses"), InTag), UInkpotProsettaLibrary::ParsePauseTag(InTag, seconds)))
+			TestEqual(FString::Printf(TEXT("'%s' seconds"), InTag), seconds, InExpected);
+	};
+	auto Invalid = [this](const TCHAR* InTag)
+	{
+		float seconds = 7.f;
+		TestFalse(FString::Printf(TEXT("'%s' rejected"), InTag), UInkpotProsettaLibrary::ParsePauseTag(InTag, seconds));
+		TestEqual(FString::Printf(TEXT("'%s' leaves output alone"), InTag), seconds, 7.f);
+	};
+
+	// pause and wait are synonyms, matched without regard to case.
+	Valid(TEXT("pause:0.2"), 0.2f);
+	Valid(TEXT("wait:1.5"), 1.5f);
+	Valid(TEXT("PAUSE:2"), 2.f);
+	Valid(TEXT("Wait:3"), 3.f);
+	// Whitespace around the key, colon and value is ignored.
+	Valid(TEXT("pause: 0.2"), 0.2f);
+	Valid(TEXT("pause :0.2"), 0.2f);
+	Valid(TEXT("  wait  :  .5  "), 0.5f);
+	Valid(TEXT("pause:\t1"), 1.f);
+	// Plain non-negative decimals, including zero and a bare fraction.
+	Valid(TEXT("pause:0"), 0.f);
+	Valid(TEXT("pause:.5"), 0.5f);
+	Valid(TEXT("pause:007"), 7.f);
+	Valid(TEXT("pause:12.25"), 12.25f);
+
+	// Everything else falls back to the default gap.
+	Invalid(TEXT("pause:-1"));
+	Invalid(TEXT("pause:+1"));
+	Invalid(TEXT("pause:"));
+	Invalid(TEXT("pause:   "));
+	Invalid(TEXT("pause:."));
+	Invalid(TEXT("pause:1."));
+	Invalid(TEXT("pause:1.2.3"));
+	Invalid(TEXT("pause:1e3"));
+	Invalid(TEXT("pause:1s"));
+	Invalid(TEXT("pause:abc"));
+	Invalid(TEXT("pause:NaN"));
+	Invalid(TEXT("pause:inf"));
+	Invalid(TEXT("pause:1 2"));
+	Invalid(TEXT("pause:1:2"));
+	Invalid(TEXT("pause 1"));
+	Invalid(TEXT("pause"));
+	Invalid(TEXT("pauses:1"));
+	Invalid(TEXT("delay:1"));
+	Invalid(TEXT("#pause:1"));
+	Invalid(TEXT(""));
+	Invalid(*(FString(TEXT("pause:")) + FString::ChrN(400, TEXT('9'))));
+
+	// A line's tags: invalid pause tags are skipped and the last valid one wins.
+	float seconds = -1.f;
+	TestFalse(TEXT("no tags"), UInkpotProsettaLibrary::FindPauseSeconds({}, seconds));
+	TestFalse(TEXT("unrelated tags"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("speaker:QUEEN"), TEXT("mood: calm") }, seconds));
+	TestTrue(TEXT("one pause among others"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("speaker:QUEEN"), TEXT("wait: 0.75") }, seconds));
+	TestEqual(TEXT("one pause seconds"), seconds, 0.75f);
+	TestTrue(TEXT("last valid wins"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("pause:1"), TEXT("WAIT:2"), TEXT("pause:-3"), TEXT("wait:oops") }, seconds));
+	TestEqual(TEXT("last valid seconds"), seconds, 2.f);
+	TestTrue(TEXT("later valid overrides earlier"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("wait:5"), TEXT("pause:0") }, seconds));
+	TestEqual(TEXT("zero override"), seconds, 0.f);
+	seconds = 9.f;
+	TestFalse(TEXT("only invalid pauses"), UInkpotProsettaLibrary::FindPauseSeconds({ TEXT("pause:-1"), TEXT("wait:") }, seconds));
+	TestEqual(TEXT("only invalid leaves output alone"), seconds, 9.f);
+	TestFalse(TEXT("null line"), UInkpotProsettaLibrary::GetLinePauseSeconds(nullptr, seconds));
+	return true;
+}
+
 #endif // !UE_BUILD_SHIPPING

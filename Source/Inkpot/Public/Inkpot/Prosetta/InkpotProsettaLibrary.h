@@ -5,6 +5,8 @@
 #include "Inkpot/Prosetta/ProsettaTypes.h"
 #include "InkpotProsettaLibrary.generated.h"
 
+class UInkpotLine;
+
 /**
  * UInkpotProsettaLibrary
  * Scans fragments of story text for <prosetta>...</prosetta> markup, recovering the
@@ -56,6 +58,37 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
 	static bool LoadSyncManifestProvenance(const FString& ManifestFilename, const FString& VolumeSlug, FProsettaStoryProvenance& OutProvenance);
+
+	/**
+	 * ParsePauseTag
+	 * Parses one Ink line tag of the form "pause:<seconds>" or "wait:<seconds>" ( synonyms ), the
+	 * time a player waits after the line finishes ( voice and text reveal ) before the next line.
+	 * The key matches without regard to case; whitespace around the key, colon and value is
+	 * ignored ( "Pause : 0.2" ). The value must be a plain non-negative decimal: digits with an
+	 * optional fractional part, or a leading '.' ( "0", ".5", "1.2" ). Signs, exponents, a
+	 * trailing '.', units and anything that does not fit in a float are rejected.
+	 * Matches the Prosetta web player's rules.
+	 * @return true and the seconds when the tag is a valid pause tag.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static bool ParsePauseTag(const FString& Tag, float& OutSeconds);
+
+	/**
+	 * FindPauseSeconds
+	 * The pause override among a line's tags. Invalid pause tags are ignored; when several valid
+	 * ones are present the last wins.
+	 * @return true when any tag is a valid pause tag.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static bool FindPauseSeconds(const TArray<FString>& Tags, float& OutSeconds);
+
+	/**
+	 * GetLinePauseSeconds
+	 * FindPauseSeconds over a line's tags. Line tags are read from the story's current tags, so
+	 * call this while the line is the story's current line.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static bool GetLinePauseSeconds(const UInkpotLine* Line, float& OutSeconds);
 
 	/** The default sync mirror manifest: <Project>/Saved/Prosetta/manifest.json. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")

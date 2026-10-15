@@ -1,4 +1,5 @@
 #include "Inkpot/Prosetta/InkpotProsettaLibrary.h"
+#include "Inkpot/InkpotLine.h"
 #include "Misc/Paths.h"
 
 namespace
@@ -226,4 +227,56 @@ FString UInkpotProsettaLibrary::GetDefaultSyncManifestPath()
 FString UInkpotProsettaLibrary::ProvenanceToLogString(const FProsettaStoryProvenance& Provenance)
 {
 	return Provenance.ToLogString();
+}
+
+bool UInkpotProsettaLibrary::ParsePauseTag(const FString& Tag, float& OutSeconds)
+{
+	int32 colon = INDEX_NONE;
+	if (!Tag.FindChar(TEXT(':'), colon))
+		return false;
+	const FString key = Tag.Left(colon).TrimStartAndEnd();
+	if (!key.Equals(TEXT("pause"), ESearchCase::IgnoreCase) && !key.Equals(TEXT("wait"), ESearchCase::IgnoreCase))
+		return false;
+
+	// Grammar: \d*\.?\d+ ( at least one digit, and a '.' must be followed by one ).
+	const FString value = Tag.Mid(colon + 1).TrimStartAndEnd();
+	int32 digitsBefore = 0, digitsAfter = 0;
+	bool bDot = false;
+	for (const TCHAR c : value)
+	{
+		if (c >= TEXT('0') && c <= TEXT('9'))
+			(bDot ? digitsAfter : digitsBefore)++;
+		else if (c == TEXT('.') && !bDot)
+			bDot = true;
+		else
+			return false;
+	}
+	if (bDot ? digitsAfter == 0 : digitsBefore == 0)
+		return false;
+
+	const float seconds = static_cast<float>(FCString::Atod(*value));
+	if (!FMath::IsFinite(seconds) || seconds < 0.f)
+		return false;
+	OutSeconds = seconds;
+	return true;
+}
+
+bool UInkpotProsettaLibrary::FindPauseSeconds(const TArray<FString>& Tags, float& OutSeconds)
+{
+	bool bFound = false;
+	for (const FString& tag : Tags)
+	{
+		float seconds = 0.f;
+		if (ParsePauseTag(tag, seconds))
+		{
+			OutSeconds = seconds;
+			bFound = true;
+		}
+	}
+	return bFound;
+}
+
+bool UInkpotProsettaLibrary::GetLinePauseSeconds(const UInkpotLine* Line, float& OutSeconds)
+{
+	return Line && Line->GetStory() && FindPauseSeconds(Line->GetTags(), OutSeconds);
 }
