@@ -3,6 +3,13 @@
 
 namespace
 {
+	// One character of a canonical language code: lowercase, '_' read as '-'. Shared by
+	// NormalizeLanguageCode and LanguageCodeEquals so the two cannot drift apart.
+	TCHAR NormalizeLanguageCodeChar(TCHAR InChar)
+	{
+		return InChar == TEXT('_') ? TEXT('-') : FChar::ToLower(InChar);
+	}
+
 	// True when InKey normalises ( UProsettaLine::NormalizeLanguageCode ) to InNormalized, without allocating.
 	bool LanguageCodeEquals(FStringView InKey, FStringView InNormalized)
 	{
@@ -11,8 +18,7 @@ namespace
 			return false;
 		for (int32 i = 0; i < InKey.Len(); ++i)
 		{
-			const TCHAR ch = InKey[i] == TEXT('_') ? TEXT('-') : FChar::ToLower(InKey[i]);
-			if (ch != InNormalized[i])
+			if (NormalizeLanguageCodeChar(InKey[i]) != InNormalized[i])
 				return false;
 		}
 		return true;
@@ -78,7 +84,10 @@ bool UProsettaLine::RenderTemplate(const FString& InTemplate, FString& OutText) 
 
 FString UProsettaLine::NormalizeLanguageCode(const FString& InLanguageCode)
 {
-	return InLanguageCode.TrimStartAndEnd().ToLower().Replace(TEXT("_"), TEXT("-"));
+	FString code = InLanguageCode.TrimStartAndEnd();
+	for (TCHAR& ch : code)
+		ch = NormalizeLanguageCodeChar(ch);
+	return code;
 }
 
 const FString* UProsettaLine::FindLocalization(const FString& InLanguageCode) const

@@ -157,7 +157,10 @@ void UProsettaWatchSubsystem::PollVersionCheck()
   int32 newline;
   if (version.FindChar(TEXT('\n'), newline)) version = version.Left(newline).TrimEnd();
   CancelVersionCheck();
-  if (exitCode != 0 || !IsSupportedCLIVersion(version))
+  // A failed `--version` ( missing .NET runtime, crash ) is not an old CLI; say so rather than "found ''".
+  if (exitCode != 0)
+   Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; `--version` exited with code %d."), MinimumCLIVersionText, exitCode);
+  else if (!IsSupportedCLIVersion(version))
    Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.Left(64));
   else
    LaunchWatch(version);

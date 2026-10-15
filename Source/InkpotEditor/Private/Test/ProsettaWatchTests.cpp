@@ -483,65 +483,6 @@ bool FProsettaWatchCLITest::RunTest(const FString& InParameters)
  return true;
 }
 #if PLATFORM_MAC || PLATFORM_LINUX
-class FProsettaSidecarCommand : public IAutomationLatentCommand
-{
-public:
- FProsettaSidecarCommand(FAutomationTestBase* InTest, UProsettaWatchSubsystem* InWatch, const FFixture& InFixture, TSharedRef<FFixtureCleanup> InCleanup)
-  : Test(InTest), Watch(InWatch), Fixture(InFixture), Cleanup(InCleanup), Started(FPlatformTime::Seconds()) {}
- virtual bool Update() override
- {
-  const FString path = TEXT("/Game/Prosetta/") + Fixture.Namespace + TEXT("/Generation.Generation");
-  UProsettaGenerationAsset* state = FindObject<UProsettaGenerationAsset>(nullptr, *path);
-  if (!state && FPlatformTime::Seconds() - Started < 15) return false;
-  Test->AddInfo(FString::Printf(TEXT("Sidecar status: %s; pending=%d; safe=%d"), *Watch->GetStatus(), Watch->GetPendingCount(), UProsettaWatchSubsystem::IsSafeToApply()));
-  Test->TestNotNull(TEXT("CLI stdout event applied by real editor ticker"), state);
-  if (state)
-  {
-   UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
-   Test->TestTrue(TEXT("sidecar generation imported exact compiled story"), story && story->GetCompiledJSON().Contains(TEXT("Generation 9")));
-  }
-  FString arguments;
-  FFileHelper::LoadFileToString(arguments, *(Fixture.Root / TEXT("args.txt")));
-  Test->TestTrue(TEXT("CLI launched with native watch arguments"), arguments.StartsWith(TEXT("watch --json --config ")) && arguments.Contains(TEXT("--channel live")));
-  Test->TestFalse(TEXT("default watch mirrors"), arguments.Contains(TEXT("--no-mirror")));
-  Watch->StopWatch();
-  Cleanup->Run();
-  return true;
- }
-private:
- FAutomationTestBase* Test;
- UProsettaWatchSubsystem* Watch;
- FFixture Fixture;
- TSharedRef<FFixtureCleanup> Cleanup;
- double Started;
-};
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarTest, "Inkpot.Prosetta.WatchSidecar",
- EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FProsettaSidecarTest::RunTest(const FString& InParameters)
-{
- const FFixture fixture = Generation(TEXT("sidecar-") + FGuid::NewGuid().ToString(), TEXT("9"), TEXT("live"));
- const TSharedRef<FFixtureCleanup> cleanup = MakeShared<FFixtureCleanup>();
- cleanup->Track(fixture);
- const FString eventPath = fixture.Root / TEXT("event.ndjson");
- const FString executable = fixture.Root / TEXT("fixture-sidecar.sh");
- const FString config = fixture.Root / TEXT("config.json");
- FFileHelper::SaveStringToFile(fixture.Event + TEXT("\n"), *eventPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
- FFileHelper::SaveStringToFile(TEXT("{}"), *config);
- const FString argsPath = fixture.Root / TEXT("args.txt");
- const FString script = TEXT("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\nprintf '%s\\n' \"$*\" > \"") + argsPath +
-  TEXT("\"\ncat \"") + eventPath + TEXT("\"\nsleep 30\n");
- FFileHelper::SaveStringToFile(script, *executable, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
- int32 chmodExit = -1;
- FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + executable + TEXT("\"")), &chmodExit, nullptr, nullptr);
- UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
- if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
- if (!TestTrue(TEXT("real sidecar process launches"), watch->StartWatch(executable, config, TEXT("")))) return false;
- AddCommand(new FProsettaSidecarCommand(this, watch, fixture, cleanup));
- return true;
-}
-
 namespace
 {
 /** Polls Condition each frame until it holds or Timeout elapses ( from when the command first runs ), then calls Done. */
@@ -585,6 +526,61 @@ FString WriteCLIScript(const FString& Root, const FString& Name, const FString& 
 }
 }
 
+class FProsettaSidecarCommand : public IAutomationLatentCommand
+{
+public:
+ FProsettaSidecarCommand(FAutomationTestBase* InTest, UProsettaWatchSubsystem* InWatch, const FFixture& InFixture, TSharedRef<FFixtureCleanup> InCleanup)
+  : Test(InTest), Watch(InWatch), Fixture(InFixture), Cleanup(InCleanup), Started(FPlatformTime::Seconds()) {}
+ virtual bool Update() override
+ {
+  const FString path = TEXT("/Game/Prosetta/") + Fixture.Namespace + TEXT("/Generation.Generation");
+  UProsettaGenerationAsset* state = FindObject<UProsettaGenerationAsset>(nullptr, *path);
+  if (!state && FPlatformTime::Seconds() - Started < 15) return false;
+  Test->AddInfo(FString::Printf(TEXT("Sidecar status: %s; pending=%d; safe=%d"), *Watch->GetStatus(), Watch->GetPendingCount(), UProsettaWatchSubsystem::IsSafeToApply()));
+  Test->TestNotNull(TEXT("CLI stdout event applied by real editor ticker"), state);
+  if (state)
+  {
+   UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
+   Test->TestTrue(TEXT("sidecar generation imported exact compiled story"), story && story->GetCompiledJSON().Contains(TEXT("Generation 9")));
+  }
+  FString arguments;
+  FFileHelper::LoadFileToString(arguments, *(Fixture.Root / TEXT("args.txt")));
+  Test->TestTrue(TEXT("CLI launched with native watch arguments"), arguments.StartsWith(TEXT("watch --json --config ")) && arguments.Contains(TEXT("--channel live")));
+  Test->TestFalse(TEXT("default watch mirrors"), arguments.Contains(TEXT("--no-mirror")));
+  Watch->StopWatch();
+  Cleanup->Run();
+  return true;
+ }
+private:
+ FAutomationTestBase* Test;
+ UProsettaWatchSubsystem* Watch;
+ FFixture Fixture;
+ TSharedRef<FFixtureCleanup> Cleanup;
+ double Started;
+};
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarTest, "Inkpot.Prosetta.WatchSidecar",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaSidecarTest::RunTest(const FString& InParameters)
+{
+ const FFixture fixture = Generation(TEXT("sidecar-") + FGuid::NewGuid().ToString(), TEXT("9"), TEXT("live"));
+ const TSharedRef<FFixtureCleanup> cleanup = MakeShared<FFixtureCleanup>();
+ cleanup->Track(fixture);
+ const FString eventPath = fixture.Root / TEXT("event.ndjson");
+ const FString config = fixture.Root / TEXT("config.json");
+ FFileHelper::SaveStringToFile(fixture.Event + TEXT("\n"), *eventPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+ FFileHelper::SaveStringToFile(TEXT("{}"), *config);
+ const FString argsPath = fixture.Root / TEXT("args.txt");
+ const FString executable = WriteCLIScript(fixture.Root, TEXT("fixture-sidecar.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\nprintf '%s\\n' \"$*\" > \"") + argsPath +
+  TEXT("\"\ncat \"") + eventPath + TEXT("\"\nsleep 30\n"));
+ UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
+ if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
+ if (!TestTrue(TEXT("real sidecar process launches"), watch->StartWatch(executable, config, TEXT("")))) return false;
+ AddCommand(new FProsettaSidecarCommand(this, watch, fixture, cleanup));
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarExitTest, "Inkpot.Prosetta.WatchSidecarExit",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -595,7 +591,7 @@ bool FProsettaSidecarExitTest::RunTest(const FString& InParameters)
  const FString config = root / TEXT("config.json");
  FFileHelper::SaveStringToFile(TEXT("{}"), *config);
  UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
- if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
+ if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
 
  // Plugin-side usage checks fail fast without launching anything.
  const FString old = WriteCLIScript(root, TEXT("old-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.9.0; exit 0; fi\ntouch \"") + root + TEXT("/launched\"\n"));
@@ -604,7 +600,7 @@ bool FProsettaSidecarExitTest::RunTest(const FString& InParameters)
  TestFalse(TEXT("usage error runs no version check"), watch->IsCheckingVersion());
 
  // A pre-watch CLI is refused once its version check answers, before it is ever launched with `watch`.
- if (!TestTrue(TEXT("0.9.0 version check starts"), watch->StartWatch(old, config, TEXT("")))) return false;
+ if (!TestTrue(TEXT("0.9.0 version check starts"), watch->StartWatch(old, config, TEXT("")))) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
  TestTrue(TEXT("version check pending"), watch->IsCheckingVersion());
  AddCommand(WaitForStatus(this, watch, TEXT("requires Prosetta Sync CLI"), [this, watch, root]()
  {
@@ -657,14 +653,14 @@ bool FProsettaWatchVersionCheckTest::RunTest(const FString& InParameters)
  const FString config = root / TEXT("config.json");
  FFileHelper::SaveStringToFile(TEXT("{}"), *config);
  UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
- if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
+ if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
 
  // A slow `--version` ( a cold .NET start ) must not block the editor: StartWatch returns at once
  // and the watch launches from the ticker when the check passes.
  const FString launched = root / TEXT("launched");
  const FString slow = WriteCLIScript(root, TEXT("slow-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then sleep 2; echo 0.10.0; exit 0; fi\ntouch \"") + launched + TEXT("\"\nexec sleep 30\n"));
  const double before = FPlatformTime::Seconds();
- if (!TestTrue(TEXT("slow CLI version check starts"), watch->StartWatch(slow, config, TEXT("")))) return false;
+ if (!TestTrue(TEXT("slow CLI version check starts"), watch->StartWatch(slow, config, TEXT("")))) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
  TestTrue(TEXT("StartWatch does not wait for --version"), FPlatformTime::Seconds() - before < 1.0);
  TestTrue(TEXT("version check pending"), watch->IsCheckingVersion());
  TestTrue(TEXT("status reports the check"), watch->GetStatus().StartsWith(TEXT("Checking Prosetta Sync CLI version")));
@@ -694,6 +690,19 @@ bool FProsettaWatchVersionCheckTest::RunTest(const FString& InParameters)
   watch->VersionCheckTimeoutSeconds = timeout;
   TestFalse(TEXT("timed out check abandoned"), watch->IsCheckingVersion());
   TestFalse(TEXT("hung CLI never ran watch"), FPaths::FileExists(hungLaunched));
+ }));
+
+ // A `--version` that fails ( e.g. the .NET runtime is missing ) is reported as a failure, not as an old CLI.
+ const FString brokenLaunched = root / TEXT("broken-launched");
+ const FString broken = WriteCLIScript(root, TEXT("broken-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 'runtime missing' >&2; exit 150; fi\ntouch \"") + brokenLaunched + TEXT("\"\n"));
+ AddCommand(new FFunctionLatentCommand([this, watch, broken, config]()
+ {
+  TestTrue(TEXT("broken CLI version check starts"), watch->StartWatch(broken, config, TEXT("")));
+  return true;
+ }));
+ AddCommand(WaitForStatus(this, watch, TEXT("`--version` exited with code 150"), [this, brokenLaunched]()
+ {
+  TestFalse(TEXT("broken CLI never ran watch"), FPaths::FileExists(brokenLaunched));
  }));
 
  // Stopping during the check cancels it.
