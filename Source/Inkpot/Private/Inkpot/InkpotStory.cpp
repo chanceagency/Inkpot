@@ -1137,7 +1137,8 @@ void UInkpotStory::BroadcastFlowEnded(const FString& InFlowName)
 UInkpotLine *UInkpotStory::GetCurrentLine()
 {
 	UInkpotLine* line = NewObject<UInkpotLine>( this );
-	line->Initialise( GetCurrentText() );
+	// The story's current tags change on every Continue; the line keeps its own copy.
+	line->Initialise( GetCurrentText(), GetCurrentTags() );
 	return line;
 }
 

@@ -1,4 +1,5 @@
 #include "Inkpot/Prosetta/InkpotProsettaLibrary.h"
+#include "Inkpot/InkpotLine.h"
 #include "Misc/Paths.h"
 
 namespace
@@ -226,4 +227,59 @@ FString UInkpotProsettaLibrary::GetDefaultSyncManifestPath()
 FString UInkpotProsettaLibrary::ProvenanceToLogString(const FProsettaStoryProvenance& Provenance)
 {
 	return Provenance.ToLogString();
+}
+
+bool UInkpotProsettaLibrary::ParsePauseTag(const FString& Tag, double& OutSeconds)
+{
+	// One leading '#' is tolerated, as the web player's parseInkTag strips it.
+	FStringView tag(Tag);
+	if (tag.StartsWith(TEXT('#')))
+		tag.RightChopInline(1);
+	int32 colon = INDEX_NONE;
+	if (!tag.FindChar(TEXT(':'), colon))
+		return false;
+	const FStringView key = tag.Left(colon).TrimStartAndEnd();
+	if (!key.Equals(TEXT("pause"), ESearchCase::IgnoreCase) && !key.Equals(TEXT("wait"), ESearchCase::IgnoreCase))
+		return false;
+
+	// Grammar: \d*\.?\d+ ( digits with at most one '.', ending in a digit ).
+	const FStringView value = tag.RightChop(colon + 1).TrimStartAndEnd();
+	auto isDigit = [](TCHAR c) { return c >= TEXT('0') && c <= TEXT('9'); };
+	if (value.IsEmpty() || !isDigit(value[value.Len() - 1]))
+		return false;
+	bool bDot = false;
+	for (const TCHAR c : value)
+	{
+		if (c == TEXT('.') && !bDot)
+			bDot = true;
+		else if (!isDigit(c))
+			return false;
+	}
+
+	// A double, like the web's Number: only values too large for a double are rejected.
+	const double seconds = FCString::Atod(*FString(value));
+	if (!FMath::IsFinite(seconds))
+		return false;
+	OutSeconds = seconds;
+	return true;
+}
+
+bool UInkpotProsettaLibrary::FindPauseSeconds(const TArray<FString>& Tags, double& OutSeconds)
+{
+	bool bFound = false;
+	for (const FString& tag : Tags)
+	{
+		double seconds = 0.0;
+		if (ParsePauseTag(tag, seconds))
+		{
+			OutSeconds = seconds;
+			bFound = true;
+		}
+	}
+	return bFound;
+}
+
+bool UInkpotProsettaLibrary::GetLinePauseSeconds(const UInkpotLine* Line, double& OutSeconds)
+{
+	return Line && FindPauseSeconds(Line->GetTags(), OutSeconds);
 }

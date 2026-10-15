@@ -9,9 +9,10 @@ UInkpotLine::UInkpotLine()
 {
 }
 
-void UInkpotLine::Initialise(const FString &InString)
+void UInkpotLine::Initialise(const FString &InString, const TArray<FString> &InTags)
 {
 	RawString = InString;
+	Tags = InTags;
 
 	// Scan the fragment for <prosetta> tags, hydrating each into a UProsettaLine and
 	// producing clean, player-facing text with the markup removed. When line metadata
@@ -126,8 +127,7 @@ const TArray<FString> &UInkpotLine::GetTags() const
 
 const TArray<FString> &UInkpotLine::GetTagsInternal() const
 {
-	UInkpotStory* story = GetStory();
-	return story->GetCurrentTags();
+	return Tags;
 }
 
 bool UInkpotLine::IsDirty()

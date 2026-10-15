@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.45.23** of the plugin.</br>
+This is version **1.46.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -39,6 +39,10 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.46.23)
+Pause tags: `UInkpotProsettaLibrary::ParsePauseTag`, `FindPauseSeconds` and `GetLinePauseSeconds` (Blueprint-pure) read an Ink line tag `#pause:<seconds>` or its synonym `#wait:<seconds>`, the time to wait after a line finishes (voice and text reveal) before auto-advancing to the next one. The key is case-insensitive, whitespace around the key, colon and value is ignored (`#pause: 0.2`), as is one leading `#` left on the tag string, and the value is a plain non-negative decimal returned as a double (`0`, `.5`, `1.2`); negative or malformed values are ignored, and when a line has several valid pause tags the last one wins. The rules match the Prosetta web player.<br>
+`UInkpotLine::GetTags` returns the tags the line was created with, copied from the story when `GetCurrentLine` builds it. It used to return the story's current tags, so a line kept after the story continued, switched flow or ran `ContinueMaximally` reported the newer line's tags (and its `#pause`). Choices still read their own choice tags.<br>
 
 ### Prosetta-specific changes (1.45.23)
 Emission-time variable snapshots are case-sensitive, as Ink variables are: `{Gold}` and `{gold}` keep separate values (`UProsettaLine::FVariableSnapshot`).<br>
