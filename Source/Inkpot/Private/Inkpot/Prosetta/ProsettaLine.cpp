@@ -22,6 +22,76 @@ void UProsettaLine::SetRuntimeText(const FString& InRuntimeText, FProsettaTempla
 	TemplateValues = MoveTemp(InValues);
 }
 
+namespace
+{
+	// Matches the template renderer's nesting limit.
+	constexpr int32 GMaxSnapshotDepth = 12;
+
+	void SnapshotTemplateVariables(const FString& InTemplate, FProsettaInlineTemplate::FVariableResolver InResolver, int32 InDepth, TMap<FString, FString>& OutSnapshot)
+	{
+		if (InDepth > GMaxSnapshotDepth || !FProsettaInlineTemplate::MayContainExpressions(InTemplate))
+			return;
+
+		const FProsettaInlineTemplate parsed(InTemplate);
+		for (const FStringView expression : parsed.GetExpressions())
+		{
+			if (!FProsettaInlineTemplate::IsIdentifierExpression(expression))
+				continue;
+			const FString name(expression);
+			if (OutSnapshot.Contains(name))
+				continue;
+			FString value;
+			if (!InResolver(expression, value))
+				continue;
+			OutSnapshot.Add(name, value);
+			// A string value that is itself a template renders nested; freeze its variables too.
+			SnapshotTemplateVariables(value, InResolver, InDepth + 1, OutSnapshot);
+		}
+	}
+}
+
+void UProsettaLine::CaptureVariables(FProsettaInlineTemplate::FVariableResolver InResolver)
+{
+	VariableSnapshot.Reset();
+	SnapshotTemplateVariables(Metadata.String, InResolver, 0, VariableSnapshot);
+	for (const TPair<FString, FString>& localization : Metadata.Localizations)
+		SnapshotTemplateVariables(localization.Value, InResolver, 0, VariableSnapshot);
+}
+
+FString UProsettaLine::NormalizeLanguageCode(const FString& InLanguageCode)
+{
+	return InLanguageCode.TrimStartAndEnd().ToLower().Replace(TEXT("_"), TEXT("-"));
+}
+
+const FString* UProsettaLine::FindLocalization(const FString& InLanguageCode) const
+{
+	if (const FString* exact = Metadata.Localizations.Find(InLanguageCode))
+	{
+		if (!exact->IsEmpty())
+			return exact;
+	}
+
+	const FString normalized = NormalizeLanguageCode(InLanguageCode);
+	if (normalized.IsEmpty())
+		return nullptr;
+
+	int32 separator = INDEX_NONE;
+	const FString base = normalized.FindChar(TEXT('-'), separator) ? normalized.Left(separator) : FString();
+
+	const FString* baseMatch = nullptr;
+	for (const TPair<FString, FString>& localization : Metadata.Localizations)
+	{
+		if (localization.Value.IsEmpty())
+			continue;
+		const FString key = NormalizeLanguageCode(localization.Key);
+		if (key == normalized)
+			return &localization.Value;
+		if (!baseMatch && !base.IsEmpty() && key == base)
+			baseMatch = &localization.Value;
+	}
+	return baseMatch;
+}
+
 const FString& UProsettaLine::GetRuntimeText() const
 {
 	return RuntimeText;
@@ -51,16 +121,23 @@ bool UProsettaLine::RenderTemplate(const FString& InTemplate, FString& OutText) 
 
 	UInkpotStory* story = GetTypedOuter<UInkpotStory>();
 	const FProsettaInlineTemplate parsed(InTemplate);
-	return parsed.Render(&TemplateValues, [story](FStringView InName, FString& OutValue)
+	return parsed.Render(&TemplateValues, [this, story](FStringView InName, FString& OutValue)
 	{
+		// Emission-time values first: a line re-presented later ( e.g. after a language
+		// switch ) must not pick up variables the story has since changed.
+		if (const FString* captured = VariableSnapshot.Find(FString(InName)))
+		{
+			OutValue = *captured;
+			return true;
+		}
 		return FProsettaInlineTemplate::ResolveStoryVariable(story, InName, OutValue);
 	}, OutText);
 }
 
 bool UProsettaLine::GetLocalizedText(const FString& InLanguageCode, FString& OutText) const
 {
-	const FString* translation = Metadata.Localizations.Find(InLanguageCode);
-	if (translation && !translation->IsEmpty() && RenderTemplate(*translation, OutText))
+	const FString* translation = FindLocalization(InLanguageCode);
+	if (translation && RenderTemplate(*translation, OutText))
 		return true;
 	OutText = Text;
 	return false;

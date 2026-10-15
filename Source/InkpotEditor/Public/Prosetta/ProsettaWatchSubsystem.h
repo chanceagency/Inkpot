@@ -39,6 +39,14 @@ public:
  static bool BuildWatchArguments(const FString& ConfigFile, const FString& Channel, const FString& Volumes, bool bMirror, FString& OutArguments, FString& OutError);
  /** Parses `prosetta-sync --version` output ( e.g. "0.10.0" or "0.10.0+abc" ) and checks it is at least 0.10.0, the first release with watch. */
  static bool IsSupportedCLIVersion(const FString& VersionOutput);
+ /**
+  * Runs `<CLI> --version`, waiting at most TimeoutSeconds before killing it. Returns true
+  * when it exited with code 0; OutVersion holds its output whenever it exited in time
+  * and is empty on a timeout or launch failure.
+  */
+ static bool ProbeCLIVersion(const FString& CLIExecutable, double TimeoutSeconds, FString& OutVersion);
+ /** How long StartWatch waits for the CLI version check before giving up. */
+ static constexpr double CLIVersionProbeTimeoutSeconds = 5.0;
 private:
  bool Tick(float DeltaTime);
  bool ApplyGeneration(const FString& EventJSON, FString& OutError);

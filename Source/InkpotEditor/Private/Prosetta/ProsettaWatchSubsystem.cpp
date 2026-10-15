@@ -122,10 +122,14 @@ bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FSt
  { Status = TEXT("Watch requires absolute CLI and configuration file paths."); return false; }
  FString arguments, error;
  if (!BuildWatchArguments(ConfigFile, Channel, Volumes, bMirror, arguments, error)) { Status = error; return false; }
- int32 versionExit = -1;
- FString version, versionError;
- FPlatformProcess::ExecProcess(*CLIExecutable, TEXT("--version"), &versionExit, &version, &versionError);
- if (versionExit != 0 || !IsSupportedCLIVersion(version))
+ FString version;
+ const bool bProbed = ProbeCLIVersion(CLIExecutable, CLIVersionProbeTimeoutSeconds, version);
+ if (!bProbed && version.IsEmpty())
+ {
+  Status = FString::Printf(TEXT("Prosetta Sync CLI did not report a version within %.0f seconds."), CLIVersionProbeTimeoutSeconds);
+  return false;
+ }
+ if (!bProbed || !IsSupportedCLIVersion(version))
  {
   Status = FString::Printf(TEXT("Watch requires Prosetta Sync CLI %s or newer; found '%s'."), MinimumCLIVersionText, *version.TrimStartAndEnd().Left(64));
   return false;
@@ -136,6 +140,40 @@ bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FSt
  if (!Process.IsValid()) { StopWatch(); Status = TEXT("Unable to launch CLI watch."); return false; }
  Status = FString::Printf(TEXT("Watching %s (CLI %s); waiting for a complete generation."), *Channel, *version.TrimStartAndEnd());
  return true;
+}
+bool UProsettaWatchSubsystem::ProbeCLIVersion(const FString& CLIExecutable, double TimeoutSeconds, FString& OutVersion)
+{
+ // Runs on the editor thread, so the wait is bounded: a CLI that hangs ( a stalled
+ // network mount, a wrapper prompting for input ) is killed rather than freezing the editor.
+ OutVersion.Reset();
+ void* readPipe = nullptr;
+ void* writePipe = nullptr;
+ if (!FPlatformProcess::CreatePipe(readPipe, writePipe)) return false;
+ FProcHandle probe = FPlatformProcess::CreateProc(*CLIExecutable, TEXT("--version"), false, true, true, nullptr, 0, nullptr, writePipe);
+ if (!probe.IsValid()) { FPlatformProcess::ClosePipe(readPipe, writePipe); return false; }
+ FString output;
+ const double deadline = FPlatformTime::Seconds() + TimeoutSeconds;
+ bool bExited = false;
+ while (!(bExited = !FPlatformProcess::IsProcRunning(probe)) && FPlatformTime::Seconds() < deadline)
+ {
+  output += FPlatformProcess::ReadPipe(readPipe);
+  FPlatformProcess::Sleep(0.01f);
+ }
+ int32 exitCode = -1;
+ if (bExited)
+ {
+  output += FPlatformProcess::ReadPipe(readPipe);
+  FPlatformProcess::GetProcReturnCode(probe, &exitCode);
+ }
+ else
+ {
+  FPlatformProcess::TerminateProc(probe, true);
+ }
+ FPlatformProcess::CloseProc(probe);
+ FPlatformProcess::ClosePipe(readPipe, writePipe);
+ if (!bExited) return false;
+ OutVersion = output;
+ return exitCode == 0;
 }
 bool UProsettaWatchSubsystem::BuildWatchArguments(const FString& ConfigFile, const FString& Channel, const FString& Volumes, bool bMirror, FString& OutArguments, FString& OutError)
 {

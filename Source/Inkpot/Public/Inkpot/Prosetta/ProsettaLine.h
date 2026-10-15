@@ -46,6 +46,27 @@ public:
 	 */
 	void SetRuntimeText(const FString& InRuntimeText, FProsettaTemplateValues&& InValues);
 
+	/**
+	 * CaptureVariables
+	 * Snapshot the current value of every variable placeholder ( e.g. "{hero}" ) in the
+	 * authored string and its localizations, including variables referenced by string
+	 * values that are themselves templates. Call at emission, after SetMetadata, so a
+	 * placeholder the runtime text could not recover ( "{hero}{title}", or a variable only
+	 * a translation uses ) still renders with emission-time values after the story moves on.
+	 */
+	void CaptureVariables(FProsettaInlineTemplate::FVariableResolver InResolver);
+
+	/**
+	 * FindLocalization
+	 * The sidecar translation for a language code, matched case-insensitively with '_'
+	 * and '-' equivalent ( "pt_BR" finds "pt-br" ), falling back to the base language
+	 * ( "fr-CA" finds "fr" ). Returns nullptr when there is no non-empty translation.
+	 */
+	const FString* FindLocalization(const FString& InLanguageCode) const;
+
+	/** Lowercases a language code, trims it and uses '-' as the region separator. */
+	static FString NormalizeLanguageCode(const FString& InLanguageCode);
+
 	/** The 'id' attribute of the source tag (e.g. "023A"). */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
 	FName GetLineId() const;
@@ -88,8 +109,8 @@ public:
 	/**
 	 * RenderTemplate
 	 * Render a template for this line ( typically a translation of its authored string )
-	 * with each {expression} replaced by the value the runtime emitted for it, else its
-	 * live value from the story. Returns true when every expression was resolved;
+	 * with each {expression} replaced by the value the runtime emitted for it, else the
+	 * variable value captured at emission ( CaptureVariables ), else its live value. Returns true when every expression was resolved;
 	 * unresolved expressions are left verbatim in OutText.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
@@ -98,7 +119,7 @@ public:
 	/**
 	 * GetLocalizedText
 	 * The player-facing text for this line in the given language, from the sidecar
-	 * localizations with inline expressions rendered. Falls back to GetText() and
+	 * localizations ( see FindLocalization ) with inline expressions rendered. Falls back to GetText() and
 	 * returns false when no translation exists or one of its expressions is unresolved.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
@@ -123,6 +144,9 @@ private:
 	FString RuntimeText;
 
 	FProsettaTemplateValues TemplateValues;
+
+	/** Emission-time values of variable placeholders, keyed by variable name. */
+	TMap<FString, FString> VariableSnapshot;
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
 	TMap<FName, FString> Attributes;

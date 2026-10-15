@@ -95,7 +95,7 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 		if (FProsettaInlineTemplate::MayContainExpressions(pair.Value.String))
 		{
 			FProsettaInlineTemplate parsed(pair.Value.String);
-			if (parsed.HasExpressions())
+			if (parsed.NeedsRendering())
 				Templates.Add(pair.Key, MoveTemp(parsed));
 		}
 	}

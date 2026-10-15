@@ -550,6 +550,40 @@ private:
  double Started;
 };
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchVersionProbeTest, "Inkpot.Prosetta.WatchVersionProbe",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchVersionProbeTest::RunTest(const FString& InParameters)
+{
+ const FString root = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("ProsettaWatchTests") / (TEXT("probe-") + FGuid::NewGuid().ToString()));
+ IFileManager::Get().MakeDirectory(*root, true);
+ const auto WriteScript = [&root](const FString& Name, const FString& Body)
+ {
+  const FString path = root / Name;
+  FFileHelper::SaveStringToFile(TEXT("#!/bin/sh\n") + Body, *path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+  int32 chmodExit = -1;
+  FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + path + TEXT("\"")), &chmodExit, nullptr, nullptr);
+  return path;
+ };
+
+ FString version;
+ TestTrue(TEXT("responsive CLI probed"), UProsettaWatchSubsystem::ProbeCLIVersion(WriteScript(TEXT("cli.sh"), TEXT("echo 0.10.2\n")), 5.0, version));
+ TestEqual(TEXT("version output"), version.TrimStartAndEnd(), TEXT("0.10.2"));
+
+ TestFalse(TEXT("failing CLI"), UProsettaWatchSubsystem::ProbeCLIVersion(WriteScript(TEXT("fail.sh"), TEXT("echo nope\nexit 3\n")), 5.0, version));
+ TestEqual(TEXT("failing output kept"), version.TrimStartAndEnd(), TEXT("nope"));
+
+ // A CLI that never answers is killed at the deadline instead of blocking the editor thread.
+ const double start = FPlatformTime::Seconds();
+ TestFalse(TEXT("hanging CLI times out"), UProsettaWatchSubsystem::ProbeCLIVersion(WriteScript(TEXT("hang.sh"), TEXT("exec sleep 30\n")), 0.5, version));
+ const double elapsed = FPlatformTime::Seconds() - start;
+ TestTrue(FString::Printf(TEXT("bounded wait ( %.2fs )"), elapsed), elapsed < 5.0);
+ TestTrue(TEXT("timeout has no version"), version.IsEmpty());
+
+ IFileManager::Get().DeleteDirectory(*root, false, true);
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarExitTest, "Inkpot.Prosetta.WatchSidecarExit",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
