@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "Inkpot/Prosetta/InkpotProsettaLibrary.h"
 #include "Inkpot/Prosetta/ProsettaMetadata.h"
+#include "Inkpot/Prosetta/ProsettaLine.h"
 #include "Inkpot/Prosetta/ProsettaTypes.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaParserTest, "Inkpot.Prosetta.Parser",
@@ -166,6 +167,61 @@ bool FProsettaMetadataTest::RunTest(const FString& InParameters)
 	TestFalse(TEXT("record id is not the join key"), metadata->Resolve(FName(TEXT("23-0001")), missing));
 	TestTrue(TEXT("id-only records still join"), metadata->ResolveText(FName(TEXT("0002")), text));
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaLocalizedLanguageCodeTest, "Inkpot.Prosetta.LocalizedLanguageCodes",
+	EAutomationTestFlags::EditorContext |
+	EAutomationTestFlags::ClientContext |
+	EAutomationTestFlags::EngineFilter |
+	EAutomationTestFlags::HighPriority)
+
+bool FProsettaLocalizedLanguageCodeTest::RunTest(const FString& InParameters)
+{
+	TestEqual(TEXT("normalize underscore and case"), UProsettaLine::NormalizeLanguageCode(TEXT(" pt_BR ")), FString(TEXT("pt-br")));
+	TestEqual(TEXT("normalize keeps base"), UProsettaLine::NormalizeLanguageCode(TEXT("FR")), FString(TEXT("fr")));
+
+	// Sidecar keys arrive in whatever form the project authored them.
+	FProsettaLineMetadata metadata;
+	metadata.LineId = TEXT("0001");
+	metadata.Localizations.Add(TEXT("pt_BR"), TEXT("Ola do Brasil"));
+	metadata.Localizations.Add(TEXT("pt"), TEXT("Ola de Portugal"));
+	metadata.Localizations.Add(TEXT("es"), TEXT("Hola"));
+	metadata.Localizations.Add(TEXT("FR-ca"), TEXT("Bonjour du Quebec"));
+	metadata.Localizations.Add(TEXT("de-DE"), TEXT("{2+2} Euro"));
+	metadata.Localizations.Add(TEXT("it-IT"), TEXT(""));
+
+	UProsettaLine* line = NewObject<UProsettaLine>(GetTransientPackage());
+	line->Initialise(TEXT("0001"), TEXT("Hello"), {}, 0, 5);
+	line->SetMetadata(metadata, true);
+	FProsettaTemplateValues values;
+	values.Add(TEXT("2+2"), TEXT("4"));
+	line->SetRuntimeText(TEXT("Hello"), MoveTemp(values));
+
+	auto Localized = [this, line](const TCHAR* InCode, const TCHAR* InExpected, bool bInFound)
+	{
+		FString text;
+		TestTrue(FString::Printf(TEXT("'%s' found"), InCode), line->GetLocalizedText(InCode, text) == bInFound);
+		TestEqual(FString::Printf(TEXT("'%s' text"), InCode), text, FString(InExpected));
+	};
+	Localized(TEXT("pt_BR"), TEXT("Ola do Brasil"), true);
+	Localized(TEXT("pt-BR"), TEXT("Ola do Brasil"), true);
+	Localized(TEXT("pt-br"), TEXT("Ola do Brasil"), true);
+	Localized(TEXT("PT_br"), TEXT("Ola do Brasil"), true);
+	Localized(TEXT("pt"), TEXT("Ola de Portugal"), true);
+	// A region without its own translation falls back to the base language.
+	Localized(TEXT("pt-PT"), TEXT("Ola de Portugal"), true);
+	Localized(TEXT("es_MX"), TEXT("Hola"), true);
+	Localized(TEXT("fr_CA"), TEXT("Bonjour du Quebec"), true);
+	// A base request does not guess between regions.
+	Localized(TEXT("fr"), TEXT("Hello"), false);
+	// Normalised matches still render inline expressions.
+	Localized(TEXT("de_de"), TEXT("4 Euro"), true);
+	// Empty translations and unknown or empty codes fall back to the line text.
+	Localized(TEXT("it-IT"), TEXT("Hello"), false);
+	Localized(TEXT("it"), TEXT("Hello"), false);
+	Localized(TEXT("ja"), TEXT("Hello"), false);
+	Localized(TEXT(""), TEXT("Hello"), false);
 	return true;
 }
 

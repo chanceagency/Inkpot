@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.41.23** of the plugin.</br>
+This is version **1.42.23** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -38,6 +38,12 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (unreleased)
+Editor watch checks the CLI version without blocking the editor: `--version` runs in the background (30 s timeout) and watch launches once it passes, so `StartWatch` / `Prosetta.Watch.Start` return at once with a "Checking Prosetta Sync CLI version" status.<br>
+A CLI that crashes with a .NET exception reports the exception message instead of its last stack frame.<br>
+`UProsettaLine::GetLocalizedText` matches language codes case and separator insensitively (`pt_BR`, `pt-br`, `PT-BR`) and falls back from a region to its base language (`pt-br` to `pt`).<br>
+Render-only inline templates (translations, nested values) no longer build the alignment used to recover runtime values.<br>
 
 ### Prosetta-specific changes (1.42.23)
 Inline Ink expressions in sidecar strings (`{2+2}`, `{gold}`, `{double(gold)}`…) now display their evaluated values in the default and translated languages, matching Prosetta's Inline Ink Player.<br>
@@ -317,7 +323,9 @@ under `Saved/Automation/agent-verify`.
 ## Watch completed CLI generations in the editor
 
 The editor watch drives the native `watch` command of **Prosetta Sync CLI 0.10.0
-or newer**; older CLIs are refused before launch. Install the current CLI, or pin
+or newer**; older CLIs are refused before launch. The version check runs in the
+background (`--version`, 30 s timeout), so starting a watch never stalls the
+editor while the CLI cold-starts; `Prosetta.Watch.Status` reports when it passes. Install the current CLI, or pin
 a specific version with `--version`:
 
 ```bash
@@ -352,7 +360,8 @@ launch with the CLI's own wording. While watching, `Prosetta.Watch.Status` repor
 the latest CLI event code — `STREAM_RECONNECTING` while the CLI reconnects,
 `GENERATION_RETRY` or `REST_<status>` (for example `REST_401` for a bad token) when
 a generation must be retried, and `blocked` for an unavailable release. If the CLI
-exits, the status keeps its exit code and last diagnostic line; exit code 2 means
+exits, the status keeps its exit code and last diagnostic message ( the first line
+of an error block, so a .NET exception shows its message, not a stack frame ); exit code 2 means
 the CLI rejected the watch arguments.
 
 The FFmpeg argument is optional for WAV-only projects. For compressed selected

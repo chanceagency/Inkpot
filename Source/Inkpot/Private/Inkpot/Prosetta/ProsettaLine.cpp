@@ -50,17 +50,50 @@ bool UProsettaLine::RenderTemplate(const FString& InTemplate, FString& OutText) 
 	}
 
 	UInkpotStory* story = GetTypedOuter<UInkpotStory>();
-	const FProsettaInlineTemplate parsed(InTemplate);
+	// Rendering only: skip the alignment ExtractValues would need.
+	const FProsettaInlineTemplate parsed(InTemplate, FProsettaInlineTemplate::EUsage::RenderOnly);
 	return parsed.Render(&TemplateValues, [story](FStringView InName, FString& OutValue)
 	{
 		return FProsettaInlineTemplate::ResolveStoryVariable(story, InName, OutValue);
 	}, OutText);
 }
 
+FString UProsettaLine::NormalizeLanguageCode(const FString& InLanguageCode)
+{
+	return InLanguageCode.TrimStartAndEnd().ToLower().Replace(TEXT("_"), TEXT("-"));
+}
+
+const FString* UProsettaLine::FindLocalization(const FString& InLanguageCode) const
+{
+	// Sidecar keys may be written "pt-BR", "pt_BR" or "pt-br"; compare normalised forms.
+	const FString requested = NormalizeLanguageCode(InLanguageCode);
+	if (requested.IsEmpty())
+		return nullptr;
+	const FString* exact = Metadata.Localizations.Find(InLanguageCode);
+	if (exact && !exact->IsEmpty())
+		return exact;
+
+	// A regional request ( "pt-br" ) falls back to its base language ( "pt" ).
+	int32 dash;
+	const FString base = requested.FindChar(TEXT('-'), dash) ? requested.Left(dash) : FString();
+	const FString* baseMatch = nullptr;
+	for (const TPair<FString, FString>& pair : Metadata.Localizations)
+	{
+		if (pair.Value.IsEmpty())
+			continue;
+		const FString key = NormalizeLanguageCode(pair.Key);
+		if (key == requested)
+			return &pair.Value;
+		if (!baseMatch && !base.IsEmpty() && key == base)
+			baseMatch = &pair.Value;
+	}
+	return baseMatch;
+}
+
 bool UProsettaLine::GetLocalizedText(const FString& InLanguageCode, FString& OutText) const
 {
-	const FString* translation = Metadata.Localizations.Find(InLanguageCode);
-	if (translation && !translation->IsEmpty() && RenderTemplate(*translation, OutText))
+	const FString* translation = FindLocalization(InLanguageCode);
+	if (translation && RenderTemplate(*translation, OutText))
 		return true;
 	OutText = Text;
 	return false;
