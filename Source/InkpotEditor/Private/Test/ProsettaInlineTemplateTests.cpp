@@ -116,6 +116,65 @@ bool FProsettaInlineTemplateParseTest::RunTest(const FString& InParameters)
 }
 
 // ---------------------------------------------------------------------------------------
+// Ink brace escapes: "\{" outside an expression is literal text
+// ---------------------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaInlineTemplateEscapeTest, "Inkpot.Prosetta.InlineTemplate.Escapes", ProsettaInlineTemplateTests::Flags)
+
+bool FProsettaInlineTemplateEscapeTest::RunTest(const FString& InParameters)
+{
+	auto resolver = [](FStringView InName, FString& OutValue) -> bool
+	{
+		if (InName != TEXTVIEW("gold"))
+			return false;
+		OutValue = TEXT("7");
+		return true;
+	};
+
+	// Ink prints "Type \{gold}" as "Type {gold}"; it is never a placeholder.
+	{
+		const FProsettaInlineTemplate parsed(TEXT("Type \\{gold}"));
+		TestEqual(TEXT("escaped brace is not an expression"), parsed.NumExpressions(), 0);
+		TestTrue(TEXT("escaped brace still needs rendering"), parsed.NeedsRendering());
+		FString out;
+		TestTrue(TEXT("escaped brace renders"), parsed.Render(nullptr, resolver, out));
+		TestEqual(TEXT("escaped brace literal"), out, TEXT("Type {gold}"));
+		TestFalse(TEXT("never the backslash and value"), out.Contains(TEXT("\\7")));
+	}
+
+	// Escapes sit alongside real placeholders, and an escaped backslash leaves the brace live.
+	{
+		FString out;
+		TestTrue(TEXT("mixed renders"), FProsettaInlineTemplate(TEXT("\\{gold\\} costs {gold}")).Render(nullptr, resolver, out));
+		TestEqual(TEXT("mixed text"), out, TEXT("{gold} costs 7"));
+		TestTrue(TEXT("escaped backslash renders"), FProsettaInlineTemplate(TEXT("C:\\\\{gold}")).Render(nullptr, resolver, out));
+		TestEqual(TEXT("escaped backslash then placeholder"), out, TEXT("C:\\7"));
+		// Escapes inside an expression belong to the expression.
+		TestEqual(TEXT("escape inside expression"), FString(FProsettaInlineTemplate(TEXT("{a \\} b}")).GetExpressions()[0]), TEXT("a \\} b"));
+	}
+
+	// Values are recovered against the unescaped literal text the runtime emits.
+	{
+		FProsettaTemplateValues values;
+		TestTrue(TEXT("extract with escapes"), FProsettaInlineTemplate(TEXT("Type \\{gold} for {gold} coins")).ExtractValues(TEXT("Type {gold} for 9 coins"), values));
+		const FProsettaTemplateValues::FEntry* entry = values.Find(TEXT("gold"));
+		TestTrue(TEXT("escaped template value"), entry && entry->Values.Num() == 1 && entry->Values[0] == TEXT("9"));
+	}
+
+	// The sidecar's authoritative string is unescaped even with no placeholders.
+	{
+		UProsettaMetadata* metadata = NewObject<UProsettaMetadata>();
+		TestTrue(TEXT("loaded"), metadata->LoadFromJSON(TEXT(R"JSON({"lines":[{"id":"23-0001","lineId":"0001","string":"Type \\{gold} to pay"}]})JSON")));
+		FString text;
+		FProsettaTemplateValues values;
+		TestTrue(TEXT("escaped line resolves"), metadata->ResolveDisplayText(FName(TEXT("0001")), TEXT("Type {gold} to pay"), resolver, text, values));
+		TestEqual(TEXT("escaped line text"), text, TEXT("Type {gold} to pay"));
+	}
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------------------
 // Extraction: recovering placeholder values from the Ink runtime's evaluated text
 // ---------------------------------------------------------------------------------------
 
@@ -298,8 +357,18 @@ bool FProsettaInlineTemplateRenderTest::RunTest(const FString& InParameters)
 		TestTrue(TEXT("recovered preferred"), FProsettaInlineTemplate(TEXT("{hero} has {gold} gold")).Render(&values, resolver, out));
 		TestEqual(TEXT("recovered value wins"), out, TEXT("Ada has 7 gold"));
 
+		// Ink itself never re-renders a value, but the Prosetta web player does
+		// ( renderRuntimeValue ), so live string values that are templates nest for parity.
 		TestTrue(TEXT("nested template"), FProsettaInlineTemplate(TEXT("{greeting}!")).Render(nullptr, resolver, out));
 		TestEqual(TEXT("nested rendered"), out, TEXT("Hello Ada!"));
+		TestTrue(TEXT("nested string literal"), FProsettaInlineTemplate(TEXT("{\"{hero}\"}!")).Render(nullptr, resolver, out));
+		TestEqual(TEXT("string literal rendered"), out, TEXT("Ada!"));
+
+		// Recovered values are the runtime's final text and are never re-rendered.
+		FProsettaTemplateValues frozen;
+		frozen.Add(TEXT("greeting"), TEXT("Hi {hero}"));
+		TestTrue(TEXT("recovered value final"), FProsettaInlineTemplate(TEXT("{greeting}!")).Render(&frozen, resolver, out));
+		TestEqual(TEXT("recovered value not nested"), out, TEXT("Hi {hero}!"));
 
 		TestFalse(TEXT("self-reference unresolved"), FProsettaInlineTemplate(TEXT("{loop}")).Render(nullptr, resolver, out));
 		TestEqual(TEXT("self-reference terminates"), out, TEXT("{loop}"));
@@ -417,6 +486,76 @@ bool FProsettaInlineTemplateMetadataTest::RunTest(const FString& InParameters)
 }
 
 // ---------------------------------------------------------------------------------------
+// UProsettaLine: emission-time variable snapshot and language code matching
+// ---------------------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaInlineTemplateLineSnapshotTest, "Inkpot.Prosetta.InlineTemplate.LineSnapshot", ProsettaInlineTemplateTests::Flags)
+
+bool FProsettaInlineTemplateLineSnapshotTest::RunTest(const FString& InParameters)
+{
+	TMap<FString, FString> variables;
+	variables.Add(TEXT("hero"), TEXT("Ada"));
+	variables.Add(TEXT("title"), TEXT("Sir"));
+	variables.Add(TEXT("mood"), TEXT("glad"));
+	variables.Add(TEXT("greeting"), TEXT("Hi {nick}"));
+	variables.Add(TEXT("nick"), TEXT("Addy"));
+	auto resolver = [&variables](FStringView InName, FString& OutValue) -> bool
+	{
+		if (const FString* value = variables.Find(FString(InName)))
+		{
+			OutValue = *value;
+			return true;
+		}
+		return false;
+	};
+
+	FProsettaLineMetadata metadata;
+	metadata.LineId = FName(TEXT("0001"));
+	// Adjacent placeholders cannot be split from the runtime text, so nothing is recovered.
+	metadata.String = TEXT("{hero}{title} waves.");
+	metadata.Localizations.Add(TEXT("it"), TEXT("{title}{hero} saluta, {mood}."));
+	metadata.Localizations.Add(TEXT("pt-BR"), TEXT("{hero} acena. {greeting}"));
+	metadata.Localizations.Add(TEXT("fr"), TEXT("{hero} salue."));
+	metadata.Localizations.Add(TEXT("de"), TEXT(""));
+
+	UProsettaLine* line = NewObject<UProsettaLine>();
+	line->Initialise(metadata.LineId, TEXT("AdaSir waves."), {}, 0, 13);
+	line->SetMetadata(metadata, true);
+	FProsettaTemplateValues values;
+	FProsettaInlineTemplate(metadata.String).ExtractValues(TEXT("AdaSir waves."), values);
+	TestTrue(TEXT("adjacent placeholders not recovered"), values.IsEmpty());
+	line->SetRuntimeText(TEXT("AdaSir waves."), MoveTemp(values));
+	line->CaptureVariables(resolver);
+
+	// The story moves on before the line is re-presented in another language.
+	variables[TEXT("hero")] = TEXT("Bea");
+	variables[TEXT("title")] = TEXT("Dame");
+	variables[TEXT("mood")] = TEXT("cross");
+	variables[TEXT("nick")] = TEXT("Bee");
+
+	FString localized;
+	TestTrue(TEXT("adjacent and translation-only"), line->GetLocalizedText(TEXT("it"), localized));
+	TestEqual(TEXT("emission-time values"), localized, TEXT("SirAda saluta, glad."));
+	TestTrue(TEXT("nested template variables"), line->GetLocalizedText(TEXT("pt-BR"), localized));
+	TestEqual(TEXT("nested emission-time values"), localized, TEXT("Ada acena. Hi Addy"));
+
+	// Language codes match regardless of case and separator, then fall back to the base language.
+	TestTrue(TEXT("underscore and case"), line->GetLocalizedText(TEXT("pt_br"), localized));
+	TestEqual(TEXT("underscore and case text"), localized, TEXT("Ada acena. Hi Addy"));
+	TestTrue(TEXT("upper case"), line->GetLocalizedText(TEXT("IT"), localized));
+	TestEqual(TEXT("upper case text"), localized, TEXT("SirAda saluta, glad."));
+	TestTrue(TEXT("base language"), line->GetLocalizedText(TEXT("fr-CA"), localized));
+	TestEqual(TEXT("base language text"), localized, TEXT("Ada salue."));
+	TestTrue(TEXT("FindLocalization base"), line->FindLocalization(TEXT("fr_ca")) != nullptr);
+	TestFalse(TEXT("empty translation"), line->GetLocalizedText(TEXT("de-AT"), localized));
+	TestEqual(TEXT("empty translation falls back"), localized, TEXT("AdaSir waves."));
+	TestFalse(TEXT("unknown language"), line->GetLocalizedText(TEXT("ja"), localized));
+	TestEqual(TEXT("normalised code"), UProsettaLine::NormalizeLanguageCode(TEXT(" PT_br ")), TEXT("pt-br"));
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------------------
 // End to end: compiled Ink + Prosetta sidecar through UInkpotStory
 // ---------------------------------------------------------------------------------------
 
@@ -446,7 +585,7 @@ bool FProsettaInlineTemplateStoryTest::RunTest(const FString& InParameters)
 	const FString sidecar = TEXT(R"JSON(
 	{"lines":[
 		{"id":"23-0001","lineId":"0001","string":"I'm a math wiz, {2+2} equals four!",
-			"localizations":{"it":"Sono un genio della matematica, {2+2} fa quattro!","metl":"{hero} says {2+2}"}},
+			"localizations":{"it":"Sono un genio della matematica, {2+2} fa quattro!","metl":"{hero} says {2+2}","de":"{gold} Gold, {2+2}"}},
 		{"id":"23-0002","lineId":"0002","string":"{hero} has {gold} gold and {gold * 2} silver.",
 			"localizations":{"it":"{gold} oro e {gold * 2} argento per {hero}."}},
 		{"id":"23-0005","lineId":"0005","string":"Twice is {double(gold)}, {&tick|tock}.",
@@ -492,10 +631,12 @@ bool FProsettaInlineTemplateStoryTest::RunTest(const FString& InParameters)
 	};
 
 	FString localized;
+	UProsettaLine* mathWiz = nullptr;
 
 	// The bug: the sidecar string replaced the evaluated text, so "{2+2}" reached the UI.
 	if (UProsettaLine* line = ContinueTo(TEXT("0001")))
 	{
+		mathWiz = line;
 		TestTrue(TEXT("0001 resolved"), line->IsResolved());
 		TestEqual(TEXT("0001 default language"), line->GetText(), TEXT("I'm a math wiz, 4 equals four!"));
 		TestEqual(TEXT("0001 runtime text"), line->GetRuntimeText(), TEXT("I'm a math wiz, 4 equals four!"));
@@ -550,6 +691,14 @@ bool FProsettaInlineTemplateStoryTest::RunTest(const FString& InParameters)
 		TestEqual(TEXT("0004 alternate language"), localized, TEXT("Ada ora ha 5 oro."));
 		TestTrue(TEXT("0004 ko"), line->GetLocalizedText(TEXT("ko"), localized));
 		TestEqual(TEXT("0004 repeated placeholder"), localized, TEXT("Ada: 5 / Ada"));
+	}
+
+	// A line re-presented after the story moved on ( gold is now 5 ) keeps its
+	// emission-time value for a variable only its translation references.
+	if (mathWiz)
+	{
+		TestTrue(TEXT("0001 de after choice"), mathWiz->GetLocalizedText(TEXT("de"), localized));
+		TestEqual(TEXT("0001 emission-time variable"), localized, TEXT("7 Gold, 4"));
 	}
 
 	inkpot->EndStory(story);

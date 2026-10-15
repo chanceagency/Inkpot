@@ -75,6 +75,9 @@ public:
 	/** Cheap pre-check: true when the text could contain an {expression}. */
 	static bool MayContainExpressions(FStringView InText);
 
+	/** True when an expression is a bare variable name ( e.g. "hero" ). */
+	static bool IsIdentifierExpression(FStringView InExpression);
+
 	/** Canonical lookup key for an expression: trimmed, inner whitespace collapsed. */
 	static FString NormalizeExpressionKey(FStringView InExpression);
 
@@ -87,6 +90,9 @@ public:
 	const FString& GetSource() const { return Source; }
 	bool HasExpressions() const { return ExpressionCount > 0; }
 	int32 NumExpressions() const { return ExpressionCount; }
+
+	/** True when Render changes the source: it has placeholders or Ink brace escapes ( "\{" ). */
+	bool NeedsRendering() const { return ExpressionCount > 0 || bHasEscapes; }
 
 	/** True when the alignment ExtractValues uses was built at construction. */
 	bool IsAligned() const { return !Alignment.Literals.IsEmpty(); }
@@ -108,7 +114,9 @@ public:
 	 * Render
 	 * Writes the template with each placeholder replaced by its recovered value,
 	 * else its live value ( literal or story variable ). Unresolvable placeholders
-	 * are written verbatim as {expression}.
+	 * are written verbatim as {expression}. A live string value that is itself a
+	 * template is rendered in turn, as the Prosetta web player does; recovered values
+	 * are final text and never re-rendered.
 	 * Returns true when every placeholder was resolved.
 	 */
 	bool Render(const FProsettaTemplateValues* InValues, FVariableResolver InResolver, FString& OutText) const;
@@ -141,4 +149,5 @@ private:
 	TArray<FString, TInlineAllocator<8>> ExpressionKeys;
 	FAlignment Alignment;
 	int32 ExpressionCount = 0;
+	bool bHasEscapes = false;
 };

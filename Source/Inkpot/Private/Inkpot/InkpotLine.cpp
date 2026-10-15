@@ -62,6 +62,7 @@ void UInkpotLine::Initialise(const FString &InString)
 		FProsettaLineMetadata lineMetadata;
 		const bool bResolved = metadata && metadata->Resolve(segment.LineId, lineMetadata);
 		line->SetMetadata(lineMetadata, bResolved);
+		line->CaptureVariables(variableResolver);
 
 		FProsettaTemplateValues values;
 		const int32 valuesIndex = resolvedValues.IndexOfByPredicate([&segment](const FResolvedValues& InResolved)

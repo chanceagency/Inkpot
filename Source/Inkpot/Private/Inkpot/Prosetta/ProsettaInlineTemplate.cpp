@@ -13,7 +13,9 @@ namespace
 	constexpr TCHAR GSentinelStart = TEXT('');
 	constexpr TCHAR GSentinelEnd = TEXT('');
 
-	// Nested template rendering ( a variable whose value is itself a template ).
+	// Nested template rendering ( a string variable or literal whose value is itself a
+	// template ). Ink never re-renders a value, but the Prosetta web player does
+	// ( renderRuntimeValue ), and lines must render the same in both.
 	constexpr int32 GMaxRecursionDepth = 12;
 
 	// Upper bound on literal alignment attempts, guarding pathological inputs.
@@ -30,13 +32,36 @@ namespace
 
 	using FRawSegments = TArray<FRawSegment, TInlineAllocator<8>>;
 
+	/** Ink text escapes a brace or backslash with a backslash: "\{" is a literal '{'. */
+	bool IsEscapedLiteral(FStringView InText, int32 InIndex)
+	{
+		if (InText[InIndex] != TEXT('\\') || InIndex + 1 >= InText.Len())
+			return false;
+		const TCHAR next = InText[InIndex + 1];
+		return next == TEXT('{') || next == TEXT('}') || next == TEXT('\\');
+	}
+
+	/** Appends literal template text with its Ink escapes ( "\{", "\}", "\\" ) removed. */
+	void AppendLiteral(FStringView InLiteral, FString& OutText)
+	{
+		const int32 len = InLiteral.Len();
+		for (int32 i = 0; i < len; ++i)
+		{
+			if (IsEscapedLiteral(InLiteral, i))
+				++i;
+			OutText.AppendChar(InLiteral[i]);
+		}
+	}
+
 	/**
 	 * Splits text into literal and {expression} segments with a quote-aware,
-	 * escape-aware, nested-brace-aware scan. An unbalanced '{' stays literal.
+	 * escape-aware, nested-brace-aware scan. An unbalanced '{' stays literal, as
+	 * does an Ink-escaped "\{" outside an expression.
 	 * Mirrors splitTemplateExpressionSegments in the Prosetta web player, except
-	 * that an apostrophe within a word does not open a single-quoted string.
+	 * that an apostrophe within a word does not open a single-quoted string, and
+	 * "\{" is literal text as it is in Ink.
 	 */
-	void SplitSegments(FStringView InText, FRawSegments& OutSegments)
+	void SplitSegments(FStringView InText, FRawSegments& OutSegments, bool* bOutHasEscapes = nullptr)
 	{
 		const int32 len = InText.Len();
 		int32 literalStart = 0;
@@ -50,6 +75,13 @@ namespace
 
 		while (index < len)
 		{
+			if (IsEscapedLiteral(InText, index))
+			{
+				if (bOutHasEscapes)
+					*bOutHasEscapes = true;
+				index += 2;
+				continue;
+			}
 			if (InText[index] != TEXT('{'))
 			{
 				++index;
@@ -342,6 +374,11 @@ FProsettaInlineTemplate::FProsettaInlineTemplate(FString InSource, EUsage InUsag
 	}
 }
 
+bool FProsettaInlineTemplate::IsIdentifierExpression(FStringView InExpression)
+{
+	return IsIdentifier(InExpression);
+}
+
 bool FProsettaInlineTemplate::MayContainExpressions(FStringView InText)
 {
 	int32 index;
@@ -439,7 +476,8 @@ FStringView FProsettaInlineTemplate::SegmentView(const FSegment& InSegment) cons
 void FProsettaInlineTemplate::Parse()
 {
 	FRawSegments raw;
-	SplitSegments(Source, raw);
+	bHasEscapes = false;
+	SplitSegments(Source, raw, &bHasEscapes);
 
 	Segments.Reset();
 	ExpressionKeys.Reset();
@@ -476,7 +514,7 @@ void FProsettaInlineTemplate::BuildAlignment(FAlignment& OutAlignment) const
 	{
 		if (!segment.bExpression)
 		{
-			sentinelized += FStringView(Source).Mid(segment.Start, segment.Len);
+			AppendLiteral(SegmentView(segment), sentinelized);
 			continue;
 		}
 		sentinelized.AppendChar(GSentinelStart);
@@ -529,7 +567,9 @@ bool FProsettaInlineTemplate::ExtractValues(FStringView InRuntimeText, FProsetta
 
 	// Runtime text that still carries one of our own placeholders is not evaluated
 	// text ( e.g. a surface passing the template through ); live evaluation handles it.
-	if (MayContainExpressions(runtime))
+	// A template with Ink-escaped braces legitimately emits "{name}", so it relies on the
+	// alignment instead ( a pass-through would still carry the backslashes ).
+	if (!bHasEscapes && MayContainExpressions(runtime))
 	{
 		FRawSegments runtimeSegments;
 		SplitSegments(runtime, runtimeSegments);
@@ -607,7 +647,7 @@ bool FProsettaInlineTemplate::Render(const FProsettaTemplateValues* InValues, FS
 
 bool FProsettaInlineTemplate::RenderInternal(const FProsettaTemplateValues* InValues, const FVariableResolver* InResolver, int32 InDepth, FString& OutText) const
 {
-	if (ExpressionCount == 0)
+	if (!NeedsRendering())
 	{
 		OutText = Source;
 		return true;
@@ -629,7 +669,7 @@ bool FProsettaInlineTemplate::RenderInternal(const FProsettaTemplateValues* InVa
 		const FStringView view = SegmentView(segment);
 		if (!segment.bExpression)
 		{
-			OutText += view;
+			AppendLiteral(view, OutText);
 			continue;
 		}
 

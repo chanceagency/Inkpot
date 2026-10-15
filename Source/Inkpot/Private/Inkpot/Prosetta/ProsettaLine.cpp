@@ -46,6 +46,42 @@ void UProsettaLine::SetRuntimeText(const FString& InRuntimeText, FProsettaTempla
 	TemplateValues = MoveTemp(InValues);
 }
 
+namespace
+{
+	// Matches the template renderer's nesting limit.
+	constexpr int32 GMaxSnapshotDepth = 12;
+
+	void SnapshotTemplateVariables(const FString& InTemplate, FProsettaInlineTemplate::FVariableResolver InResolver, int32 InDepth, TMap<FString, FString>& OutSnapshot)
+	{
+		if (InDepth > GMaxSnapshotDepth || !FProsettaInlineTemplate::MayContainExpressions(InTemplate))
+			return;
+
+		const FProsettaInlineTemplate parsed(InTemplate);
+		for (const FStringView expression : parsed.GetExpressions())
+		{
+			if (!FProsettaInlineTemplate::IsIdentifierExpression(expression))
+				continue;
+			const FString name(expression);
+			if (OutSnapshot.Contains(name))
+				continue;
+			FString value;
+			if (!InResolver(expression, value))
+				continue;
+			OutSnapshot.Add(name, value);
+			// A string value that is itself a template renders nested; freeze its variables too.
+			SnapshotTemplateVariables(value, InResolver, InDepth + 1, OutSnapshot);
+		}
+	}
+}
+
+void UProsettaLine::CaptureVariables(FProsettaInlineTemplate::FVariableResolver InResolver)
+{
+	VariableSnapshot.Reset();
+	SnapshotTemplateVariables(Metadata.String, InResolver, 0, VariableSnapshot);
+	for (const TPair<FString, FString>& localization : Metadata.Localizations)
+		SnapshotTemplateVariables(localization.Value, InResolver, 0, VariableSnapshot);
+}
+
 const FString& UProsettaLine::GetRuntimeText() const
 {
 	return RuntimeText;
@@ -76,8 +112,15 @@ bool UProsettaLine::RenderTemplate(const FString& InTemplate, FString& OutText) 
 	UInkpotStory* story = GetTypedOuter<UInkpotStory>();
 	// Rendering only: skip the alignment ExtractValues would need.
 	const FProsettaInlineTemplate parsed(InTemplate, FProsettaInlineTemplate::EUsage::RenderOnly);
-	return parsed.Render(&TemplateValues, [story](FStringView InName, FString& OutValue)
+	return parsed.Render(&TemplateValues, [this, story](FStringView InName, FString& OutValue)
 	{
+		// Emission-time values first: a line re-presented later ( e.g. after a language
+		// switch ) must not pick up variables the story has since changed.
+		if (const FString* captured = VariableSnapshot.Find(FString(InName)))
+		{
+			OutValue = *captured;
+			return true;
+		}
 		return FProsettaInlineTemplate::ResolveStoryVariable(story, InName, OutValue);
 	}, OutText);
 }
