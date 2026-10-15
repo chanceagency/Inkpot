@@ -25,3 +25,13 @@ Removed keys leave the active generation registry. `WatchOwnedRemoval` verifies 
 - `InlineTemplate.Story` runs compiled Ink through `UInkpotStory` with a sidecar that uses Engine Sync `id`/`lineId` records. It checks evaluated text for arithmetic, variables, function calls, sequences, a choice, and post-choice state in the default language, Italian, and two placeholder-reordering test languages, plus fallback for a missing language.
 
 The authenticated Prosetta stream was not contacted; a human should still run `Prosetta.Watch.Start` against a real project with CLI 0.10.0.
+
+## Inkpot 1.43.23 — October 14, 2026
+
+`python3 Scripts/agent-verify.py --tests Inkpot` passed all 207 `Inkpot` tests on macOS/UE 5.8 with Xcode 27.0, and the plugin was checked by hand in the Unreal Editor.
+
+- `WatchVersionCheck` checks that `StartWatch` returns in under a second while a fixture CLI takes 2 s to answer `--version`, and that the watch launches only after the check passes. It also checks that a hung `--version` is dropped after `VersionCheckTimeoutSeconds` and never launched, and that `StopWatch` cancels a pending check.
+- `WatchSidecarExit` now waits for the 0.9.0 refusal to arrive asynchronously. It adds a CLI that crashes with a .NET exception and checks that the status shows the exception message, not a stack frame.
+- `WatchCLI` covers `SelectDiagnostic`: an error block keeps its first line, while stack frames, `--- End of` markers and indented continuations are skipped.
+- `LocalizedLanguageCodes` covers `UProsettaLine::GetLocalizedText`: language codes match regardless of case and separator, a region falls back to its base language, a base code never guesses between regions, and inline expressions render through a normalised match.
+- `InlineTemplate.RenderOnly` checks that `EUsage::RenderOnly` builds no alignment, renders the same output as an aligned template, still recovers values through `ExtractValues`, and still resolves nested values.
