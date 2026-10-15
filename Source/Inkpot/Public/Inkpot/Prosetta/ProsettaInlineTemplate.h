@@ -87,6 +87,9 @@ public:
 	/** Resolves a variable against the story's current variable state. */
 	static bool ResolveStoryVariable(UInkpotStory* InStory, FStringView InName, FString& OutText);
 
+	/** Templates parsed since start-up. Lets tests show the per-line hot path parses nothing. */
+	static uint64 GetParseCount();
+
 	const FString& GetSource() const { return Source; }
 	bool HasExpressions() const { return ExpressionCount > 0; }
 	int32 NumExpressions() const { return ExpressionCount; }

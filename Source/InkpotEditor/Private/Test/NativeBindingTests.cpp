@@ -251,9 +251,12 @@ bool FInkpotNativeBindingRuntimeTest::RunTest(const FString& InParameters)
 	TestTrue(TEXT("remove observer"), story->RemoveVariableObserver(counterHandle));
 	TestFalse(TEXT("remove twice fails"), story->RemoveVariableObserver(counterHandle));
 
-	// Direct C++ binding, inkcpp style, with override.
+	// Direct C++ binding, inkcpp style, overriding the registered module's binding. The
+	// refused duplicate below is the one "already bound" warning this test expects.
 	TestTrue(TEXT("override binding"), story->BindNativeFunction(TEXT("inkpot_test_add"), &Prosetta::Bindings::InkpotNativeTest::inkpot_test_add, true, true));
+	AddExpectedMessagePlain(TEXT("'inkpot_test_add' is already bound"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 	TestFalse(TEXT("duplicate binding refused without override"), story->BindNativeFunction(TEXT("inkpot_test_add"), &Prosetta::Bindings::InkpotNativeTest::inkpot_test_add, true, false));
+	TestTrue(TEXT("still bound"), story->IsExternalFunctionBound(TEXT("inkpot_test_add")));
 
 	// Story audit against a manifest.
 	FProsettaNativeBindingsManifest manifest;

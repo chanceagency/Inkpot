@@ -37,6 +37,27 @@ namespace ProsettaInlineTemplateTests
 			*bOutResolved = bResolved;
 		return out;
 	}
+
+	/**
+	 * Compiled with inklecate from:
+	 *
+	 *   VAR gold = 7
+	 *   VAR hero = "Ada"
+	 *   <prosetta id="0001">I'm a math wiz, {2+2} equals four!</prosetta>
+	 *   <prosetta id="0002">{hero} has {gold} gold and {gold * 2} silver.</prosetta>
+	 *   <prosetta id="0005">Twice is {double(gold)}, {&tick|tock}.</prosetta>
+	 *   * <prosetta id="0003">Pay {gold - 2} coins</prosetta>
+	 *     ~ gold = gold - 2
+	 *     <prosetta id="0004">{hero} now has {gold} gold.</prosetta>
+	 *     -> END
+	 *
+	 *   === function double(x)
+	 *   ~ return x * 2
+	 */
+	FString CompiledStory()
+	{
+		return TEXT(R"JSON({"inkVersion":21,"root":[["^<prosetta id=\"0001\">I'm a math wiz, ","ev",2,2,"+","out","/ev","^ equals four!</prosetta>","\n","^<prosetta id=\"0002\">","ev",{"VAR?":"hero"},"out","/ev","^ has ","ev",{"VAR?":"gold"},"out","/ev","^ gold and ","ev",{"VAR?":"gold"},2,"*","out","/ev","^ silver.</prosetta>","\n","^<prosetta id=\"0005\">Twice is ","ev",{"VAR?":"gold"},{"f()":"double"},"out","/ev","^, ",["ev","visit",2,"%","/ev","ev","du",0,"==","/ev",{"->":".^.s0","c":true},"ev","du",1,"==","/ev",{"->":".^.s1","c":true},"nop",{"s0":["pop","^tick",{"->":"0.35.17"},null],"s1":["pop","^tock",{"->":"0.35.17"},null],"#f":5}],"^.</prosetta>","\n",["ev",{"^->":"0.38.$r1"},{"temp=":"$r"},"str",{"->":".^.s"},[{"#n":"$r1"}],"/str","/ev",{"*":"0.c-0","flg":18},{"s":["^<prosetta id=\"0003\">Pay ","ev",{"VAR?":"gold"},2,"-","out","/ev","^ coins</prosetta>",{"->":"$r","var":true},null]}],{"c-0":["ev",{"^->":"0.c-0.$r2"},"/ev",{"temp=":"$r"},{"->":"0.38.s"},[{"#n":"$r2"}],"\n","ev",{"VAR?":"gold"},2,"-","/ev",{"VAR=":"gold","re":true},"^<prosetta id=\"0004\">","ev",{"VAR?":"hero"},"out","/ev","^ now has ","ev",{"VAR?":"gold"},"out","/ev","^ gold.</prosetta>","\n","end",{"->":"0.g-0"},{"#f":5}],"g-0":["done",null]}],"done",{"double":[{"temp=":"x"},"ev",{"VAR?":"x"},2,"*","/ev","~ret",null],"global decl":["ev",7,{"VAR=":"gold"},"str","^Ada","/str",{"VAR=":"hero"},"/ev","end",null]}],"listDefs":{}})JSON");
+	}
 }
 
 // ---------------------------------------------------------------------------------------
@@ -493,12 +514,16 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaInlineTemplateLineSnapshotTest, "Inkpo
 
 bool FProsettaInlineTemplateLineSnapshotTest::RunTest(const FString& InParameters)
 {
-	TMap<FString, FString> variables;
+	// Ink variables are case-sensitive: "Gold" and "gold" are two variables.
+	UProsettaLine::FVariableSnapshot variables;
 	variables.Add(TEXT("hero"), TEXT("Ada"));
 	variables.Add(TEXT("title"), TEXT("Sir"));
 	variables.Add(TEXT("mood"), TEXT("glad"));
 	variables.Add(TEXT("greeting"), TEXT("Hi {nick}"));
 	variables.Add(TEXT("nick"), TEXT("Addy"));
+	variables.Add(TEXT("Gold"), TEXT("9"));
+	variables.Add(TEXT("gold"), TEXT("7"));
+	TestEqual(TEXT("test variables are case-sensitive"), variables.Num(), 7);
 	auto resolver = [&variables](FStringView InName, FString& OutValue) -> bool
 	{
 		if (const FString* value = variables.Find(FString(InName)))
@@ -517,6 +542,15 @@ bool FProsettaInlineTemplateLineSnapshotTest::RunTest(const FString& InParameter
 	metadata.Localizations.Add(TEXT("pt-BR"), TEXT("{hero} acena. {greeting}"));
 	metadata.Localizations.Add(TEXT("fr"), TEXT("{hero} salue."));
 	metadata.Localizations.Add(TEXT("de"), TEXT(""));
+	metadata.Localizations.Add(TEXT("es"), TEXT("{Gold} y {gold}, {hero}."));
+	UProsettaMetadata::CollectVariableNames(metadata);
+	if (TestEqual(TEXT("variable names collected once"), metadata.VariableNames,
+		TArray<FString>({ TEXT("hero"), TEXT("title"), TEXT("mood"), TEXT("greeting"), TEXT("Gold"), TEXT("gold") })))
+	{
+		// FString compares case-insensitively, so the array check above proves order only.
+		TestTrue(TEXT("Gold kept"), metadata.VariableNames[4].Equals(TEXT("Gold"), ESearchCase::CaseSensitive));
+		TestTrue(TEXT("gold kept"), metadata.VariableNames[5].Equals(TEXT("gold"), ESearchCase::CaseSensitive));
+	}
 
 	UProsettaLine* line = NewObject<UProsettaLine>();
 	line->Initialise(metadata.LineId, TEXT("AdaSir waves."), {}, 0, 13);
@@ -527,17 +561,34 @@ bool FProsettaInlineTemplateLineSnapshotTest::RunTest(const FString& InParameter
 	line->SetRuntimeText(TEXT("AdaSir waves."), MoveTemp(values));
 	line->CaptureVariables(resolver);
 
+	// Metadata assembled by hand without CollectVariableNames is collected at emission.
+	FProsettaLineMetadata uncollected = metadata;
+	uncollected.VariableNames.Reset();
+	uncollected.bVariableNamesCollected = false;
+	UProsettaLine* handBuilt = NewObject<UProsettaLine>();
+	handBuilt->Initialise(metadata.LineId, TEXT("AdaSir waves."), {}, 0, 13);
+	handBuilt->SetMetadata(uncollected, true);
+	handBuilt->CaptureVariables(resolver);
+	TestEqual(TEXT("hand-built names collected at emission"), handBuilt->GetMetadata().VariableNames.Num(), 6);
+
 	// The story moves on before the line is re-presented in another language.
 	variables[TEXT("hero")] = TEXT("Bea");
 	variables[TEXT("title")] = TEXT("Dame");
 	variables[TEXT("mood")] = TEXT("cross");
 	variables[TEXT("nick")] = TEXT("Bee");
+	variables[TEXT("Gold")] = TEXT("1");
+	variables[TEXT("gold")] = TEXT("2");
 
 	FString localized;
 	TestTrue(TEXT("adjacent and translation-only"), line->GetLocalizedText(TEXT("it"), localized));
 	TestEqual(TEXT("emission-time values"), localized, TEXT("SirAda saluta, glad."));
 	TestTrue(TEXT("nested template variables"), line->GetLocalizedText(TEXT("pt-BR"), localized));
 	TestEqual(TEXT("nested emission-time values"), localized, TEXT("Ada acena. Hi Addy"));
+	// Variables differing only in case keep separate snapshot values.
+	TestTrue(TEXT("case-sensitive variables"), line->GetLocalizedText(TEXT("es"), localized));
+	TestEqual(TEXT("case-sensitive emission-time values"), localized, TEXT("9 y 7, Ada."));
+	TestTrue(TEXT("hand-built line"), handBuilt->GetLocalizedText(TEXT("it"), localized));
+	TestEqual(TEXT("hand-built emission-time values"), localized, TEXT("SirAda saluta, glad."));
 
 	// Language codes match regardless of case and separator, then fall back to the base language.
 	TestTrue(TEXT("underscore and case"), line->GetLocalizedText(TEXT("pt_br"), localized));
@@ -563,23 +614,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaInlineTemplateStoryTest, "Inkpot.Prose
 
 bool FProsettaInlineTemplateStoryTest::RunTest(const FString& InParameters)
 {
-	/*
-	 * Compiled with inklecate from:
-	 *
-	 *   VAR gold = 7
-	 *   VAR hero = "Ada"
-	 *   <prosetta id="0001">I'm a math wiz, {2+2} equals four!</prosetta>
-	 *   <prosetta id="0002">{hero} has {gold} gold and {gold * 2} silver.</prosetta>
-	 *   <prosetta id="0005">Twice is {double(gold)}, {&tick|tock}.</prosetta>
-	 *   * <prosetta id="0003">Pay {gold - 2} coins</prosetta>
-	 *     ~ gold = gold - 2
-	 *     <prosetta id="0004">{hero} now has {gold} gold.</prosetta>
-	 *     -> END
-	 *
-	 *   === function double(x)
-	 *   ~ return x * 2
-	 */
-	const FString compiled = TEXT(R"JSON({"inkVersion":21,"root":[["^<prosetta id=\"0001\">I'm a math wiz, ","ev",2,2,"+","out","/ev","^ equals four!</prosetta>","\n","^<prosetta id=\"0002\">","ev",{"VAR?":"hero"},"out","/ev","^ has ","ev",{"VAR?":"gold"},"out","/ev","^ gold and ","ev",{"VAR?":"gold"},2,"*","out","/ev","^ silver.</prosetta>","\n","^<prosetta id=\"0005\">Twice is ","ev",{"VAR?":"gold"},{"f()":"double"},"out","/ev","^, ",["ev","visit",2,"%","/ev","ev","du",0,"==","/ev",{"->":".^.s0","c":true},"ev","du",1,"==","/ev",{"->":".^.s1","c":true},"nop",{"s0":["pop","^tick",{"->":"0.35.17"},null],"s1":["pop","^tock",{"->":"0.35.17"},null],"#f":5}],"^.</prosetta>","\n",["ev",{"^->":"0.38.$r1"},{"temp=":"$r"},"str",{"->":".^.s"},[{"#n":"$r1"}],"/str","/ev",{"*":"0.c-0","flg":18},{"s":["^<prosetta id=\"0003\">Pay ","ev",{"VAR?":"gold"},2,"-","out","/ev","^ coins</prosetta>",{"->":"$r","var":true},null]}],{"c-0":["ev",{"^->":"0.c-0.$r2"},"/ev",{"temp=":"$r"},{"->":"0.38.s"},[{"#n":"$r2"}],"\n","ev",{"VAR?":"gold"},2,"-","/ev",{"VAR=":"gold","re":true},"^<prosetta id=\"0004\">","ev",{"VAR?":"hero"},"out","/ev","^ now has ","ev",{"VAR?":"gold"},"out","/ev","^ gold.</prosetta>","\n","end",{"->":"0.g-0"},{"#f":5}],"g-0":["done",null]}],"done",{"double":[{"temp=":"x"},"ev",{"VAR?":"x"},2,"*","/ev","~ret",null],"global decl":["ev",7,{"VAR=":"gold"},"str","^Ada","/str",{"VAR=":"hero"},"/ev","end",null]}],"listDefs":{}})JSON");
+	const FString compiled = ProsettaInlineTemplateTests::CompiledStory();
 
 	// Engine Sync array form: database "id" alongside the tag's "lineId".
 	const FString sidecar = TEXT(R"JSON(
@@ -699,6 +734,81 @@ bool FProsettaInlineTemplateStoryTest::RunTest(const FString& InParameters)
 	{
 		TestTrue(TEXT("0001 de after choice"), mathWiz->GetLocalizedText(TEXT("de"), localized));
 		TestEqual(TEXT("0001 emission-time variable"), localized, TEXT("7 Gold, 4"));
+	}
+
+	inkpot->EndStory(story);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaInlineTemplateStoryParseOnceTest, "Inkpot.Prosetta.InlineTemplate.StoryParseOnce", ProsettaInlineTemplateTests::Flags)
+
+bool FProsettaInlineTemplateStoryParseOnceTest::RunTest(const FString& InParameters)
+{
+	// A project with many translations: every line carries one template per language.
+	// Templates parse when the sidecar loads; emitting a line must not parse them again.
+	constexpr int32 Languages = 60;
+	const TCHAR* lineIds[] = { TEXT("0001"), TEXT("0002"), TEXT("0005"), TEXT("0003"), TEXT("0004") };
+	constexpr int32 LineCount = UE_ARRAY_COUNT(lineIds);
+	FString sidecar = TEXT("{\"lines\":{");
+	for (int32 i = 0; i < LineCount; ++i)
+	{
+		sidecar += FString::Printf(TEXT("%s\"%s\":{\"string\":\"{hero} has {gold} gold, line %s.\",\"localizations\":{"), i ? TEXT(",") : TEXT(""), lineIds[i], lineIds[i]);
+		for (int32 language = 0; language < Languages; ++language)
+			sidecar += FString::Printf(TEXT("%s\"l%02d\":\"[l%02d] {gold} / {hero} line %s\""), language ? TEXT(",") : TEXT(""), language, language, lineIds[i]);
+		sidecar += TEXT("}}");
+	}
+	sidecar += TEXT("}}");
+
+	UInkpot* inkpot = GEngine ? GEngine->GetEngineSubsystem<UInkpot>() : nullptr;
+	if (!TestNotNull(TEXT("inkpot subsystem"), inkpot))
+		return false;
+
+	UInkpotStoryAsset* asset = NewObject<UInkpotStoryAsset>(GetTransientPackage(), NAME_None, RF_Transient);
+	asset->SetCompiledJSON(ProsettaInlineTemplateTests::CompiledStory());
+	asset->SetProsettaJSON(sidecar);
+
+	const uint64 beforeLoad = FProsettaInlineTemplate::GetParseCount();
+	UInkpotStory* story = inkpot->BeginStory(asset);
+	if (!TestNotNull(TEXT("story began"), story) || !TestNotNull(TEXT("sidecar attached"), story->GetProsettaMetadata()))
+	{
+		if (story)
+			inkpot->EndStory(story);
+		return false;
+	}
+	TestEqual(TEXT("sidecar loaded"), story->GetProsettaMetadata()->Num(), LineCount);
+	// Every template parses exactly once at load: the string and each translation of each line.
+	TestEqual(TEXT("templates parsed at load"), FProsettaInlineTemplate::GetParseCount() - beforeLoad, (uint64)(LineCount * (Languages + 1)));
+
+	const uint64 beforeContinue = FProsettaInlineTemplate::GetParseCount();
+	int32 emitted = 0;
+	TArray<TStrongObjectPtr<UProsettaLine>> lines;
+	for (int32 pass = 0; pass < 2; ++pass)
+	{
+		while (story->CanContinue())
+		{
+			story->Continue();
+			for (UProsettaLine* segment : story->GetCurrentLine()->GetProsettaSegments())
+			{
+				++emitted;
+				lines.Emplace(segment);
+				TestTrue(FString::Printf(TEXT("%s resolved"), *segment->GetLineId().ToString()), segment->IsResolved());
+				TestEqual(FString::Printf(TEXT("%s variable names cached"), *segment->GetLineId().ToString()), segment->GetMetadata().VariableNames, TArray<FString>({ TEXT("hero"), TEXT("gold") }));
+			}
+		}
+		const TArray<UInkpotChoice*>& choices = story->GetCurrentChoices();
+		if (pass == 0 && TestEqual(TEXT("one choice"), choices.Num(), 1))
+			story->ChooseChoice(choices[0]);
+	}
+	// Three lines, the chosen choice's echoed text, then the line after it.
+	TestEqual(TEXT("every line emitted"), emitted, 5);
+	TestEqual(TEXT("no template parsed while the story ran"), FProsettaInlineTemplate::GetParseCount() - beforeContinue, (uint64)0);
+
+	// Emission-time values survive the story moving on ( gold went from 7 to 5 ).
+	FString localized;
+	if (TestTrue(TEXT("lines captured"), lines.Num() > 0))
+	{
+		TestTrue(TEXT("0001 l37"), lines[0]->GetLocalizedText(TEXT("l37"), localized));
+		TestEqual(TEXT("0001 emission-time values"), localized, TEXT("[l37] 7 / Ada line 0001"));
 	}
 
 	inkpot->EndStory(story);

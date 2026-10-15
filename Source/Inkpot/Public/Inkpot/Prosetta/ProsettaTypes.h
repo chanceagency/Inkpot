@@ -37,6 +37,18 @@ struct INKPOT_API FProsettaLineMetadata
 	/** Localised variants of the line text, keyed by language code. */
 	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
 	TMap<FString, FString> Localizations;
+
+	/**
+	 * Every variable placeholder ( "{hero}" ) in String and its Localizations, in first-seen
+	 * order and distinct case-sensitively as Ink variables are. Collected once when the
+	 * sidecar loads ( UProsettaMetadata::CollectVariableNames ) so UProsettaLine::CaptureVariables
+	 * never re-parses the templates at emission.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category="Inkpot|Prosetta")
+	TArray<FString> VariableNames;
+
+	/** True once VariableNames has been collected; metadata assembled by hand is collected at emission. */
+	bool bVariableNamesCollected = false;
 };
 
 /**

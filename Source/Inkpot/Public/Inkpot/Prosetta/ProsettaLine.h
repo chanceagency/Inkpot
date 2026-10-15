@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Inkpot/Prosetta/ProsettaTypes.h"
 #include "Inkpot/Prosetta/ProsettaInlineTemplate.h"
+#include "Internationalization/LocKeyFuncs.h"
 #include "ProsettaLine.generated.h"
 
 /**
@@ -27,6 +28,13 @@ class INKPOT_API UProsettaLine : public UObject
 
 public:
 	/**
+	 * Variable values keyed by name. Ink variable names are case-sensitive ( "Gold" and
+	 * "gold" are two variables ), unlike a TMap keyed by FString, so the map compares
+	 * and hashes its keys case-sensitively.
+	 */
+	using FVariableSnapshot = TMap<FString, FString, FDefaultSetAllocator, FLocKeyMapFuncs<FString>>;
+
+	/**
 	 * Initialise
 	 * @param InLineId      the value of the tag's 'id' attribute.
 	 * @param InText        the player-facing text for this segment ( already resolved ).
@@ -37,7 +45,7 @@ public:
 	void Initialise(FName InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength);
 
 	/** Apply the authored metadata resolved for this line's id. */
-	void SetMetadata(const FProsettaLineMetadata& InMetadata, bool bInResolved);
+	void SetMetadata(FProsettaLineMetadata InMetadata, bool bInResolved);
 
 	/**
 	 * SetRuntimeText
@@ -49,10 +57,11 @@ public:
 	/**
 	 * CaptureVariables
 	 * Snapshot the current value of every variable placeholder ( e.g. "{hero}" ) in the
-	 * authored string and its localizations, including variables referenced by string
-	 * values that are themselves templates. Call at emission, after SetMetadata, so a
-	 * placeholder the runtime text could not recover ( "{hero}{title}", or a variable only
-	 * a translation uses ) still renders with emission-time values after the story moves on.
+	 * authored string and its localizations ( FProsettaLineMetadata::VariableNames, collected
+	 * when the sidecar loaded, or here for metadata assembled by hand ), including variables referenced by string values that are
+	 * themselves templates. Call at emission, after SetMetadata, so a placeholder the runtime
+	 * text could not recover ( "{hero}{title}", or a variable only a translation uses ) still
+	 * renders with emission-time values after the story moves on.
 	 */
 	void CaptureVariables(FProsettaInlineTemplate::FVariableResolver InResolver);
 
@@ -150,7 +159,7 @@ private:
 	FProsettaTemplateValues TemplateValues;
 
 	/** Emission-time values of variable placeholders, keyed by variable name. */
-	TMap<FString, FString> VariableSnapshot;
+	FVariableSnapshot VariableSnapshot;
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
 	TMap<FName, FString> Attributes;

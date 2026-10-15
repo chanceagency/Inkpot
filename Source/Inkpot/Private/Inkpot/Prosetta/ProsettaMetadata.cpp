@@ -30,6 +30,41 @@ namespace
 		ReadStringMap(InObject, TEXT("localizations"), meta.Localizations);
 		return meta;
 	}
+
+	// Appends the bare variable names among InTemplate's expressions that OutNames lacks.
+	// Ink variables are case-sensitive, so "Gold" and "gold" are two names ( TArray::AddUnique
+	// would fold them together ).
+	void AppendVariableNames(const FProsettaInlineTemplate& InTemplate, TArray<FString>& OutNames)
+	{
+		for (const FStringView expression : InTemplate.GetExpressions())
+		{
+			if (!FProsettaInlineTemplate::IsIdentifierExpression(expression))
+				continue;
+			const bool bKnown = OutNames.ContainsByPredicate([expression](const FString& InName)
+			{
+				return FStringView(InName).Equals(expression, ESearchCase::CaseSensitive);
+			});
+			if (!bKnown)
+				OutNames.Emplace(expression);
+		}
+	}
+
+	// Fills InOutMetadata.VariableNames from its String and Localizations. InParsedString is
+	// String already parsed by the caller, or nullptr to parse it here.
+	void FillVariableNames(FProsettaLineMetadata& InOutMetadata, const FProsettaInlineTemplate* InParsedString)
+	{
+		InOutMetadata.VariableNames.Reset();
+		if (InParsedString)
+			AppendVariableNames(*InParsedString, InOutMetadata.VariableNames);
+		else if (FProsettaInlineTemplate::MayContainExpressions(InOutMetadata.String))
+			AppendVariableNames(FProsettaInlineTemplate(InOutMetadata.String, FProsettaInlineTemplate::EUsage::RenderOnly), InOutMetadata.VariableNames);
+		for (const TPair<FString, FString>& localization : InOutMetadata.Localizations)
+		{
+			if (FProsettaInlineTemplate::MayContainExpressions(localization.Value))
+				AppendVariableNames(FProsettaInlineTemplate(localization.Value, FProsettaInlineTemplate::EUsage::RenderOnly), InOutMetadata.VariableNames);
+		}
+		InOutMetadata.bVariableNamesCollected = true;
+	}
 }
 
 bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
@@ -89,15 +124,20 @@ bool UProsettaMetadata::LoadFromJSON(const FString& InJSON)
 	}
 
 	// Parse inline expression templates once, up front, so the per-line hot path only
-	// aligns and renders.
-	for (const TPair<FName, FProsettaLineMetadata>& pair : Lines)
+	// aligns and renders, and record each line's variable names so emission
+	// ( UProsettaLine::CaptureVariables ) never parses the string or its translations.
+	for (TPair<FName, FProsettaLineMetadata>& pair : Lines)
 	{
-		if (FProsettaInlineTemplate::MayContainExpressions(pair.Value.String))
+		FProsettaLineMetadata& meta = pair.Value;
+		if (!FProsettaInlineTemplate::MayContainExpressions(meta.String))
 		{
-			FProsettaInlineTemplate parsed(pair.Value.String);
-			if (parsed.NeedsRendering())
-				Templates.Add(pair.Key, MoveTemp(parsed));
+			FillVariableNames(meta, nullptr);
+			continue;
 		}
+		FProsettaInlineTemplate parsed(meta.String);
+		FillVariableNames(meta, &parsed);
+		if (parsed.NeedsRendering())
+			Templates.Add(pair.Key, MoveTemp(parsed));
 	}
 
 	return Lines.Num() > 0;
@@ -153,6 +193,11 @@ bool UProsettaMetadata::ResolveDisplayText(FName InLineId, FStringView InRuntime
 const FProsettaInlineTemplate* UProsettaMetadata::FindTemplate(FName InLineId) const
 {
 	return Templates.Find(InLineId);
+}
+
+void UProsettaMetadata::CollectVariableNames(FProsettaLineMetadata& InOutMetadata)
+{
+	FillVariableNames(InOutMetadata, nullptr);
 }
 
 int32 UProsettaMetadata::Num() const
