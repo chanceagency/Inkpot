@@ -431,6 +431,18 @@ bool FProsettaWatchCLITest::RunTest(const FString& InParameters)
  TestFalse(TEXT("garbage rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("Unknown command 'version'.")));
  TestFalse(TEXT("two-part rejected"), UProsettaWatchSubsystem::IsSupportedCLIVersion(TEXT("0.10")));
 
+ // An error block keeps its first line; .NET stack frames never replace it.
+ FString diagnostic;
+ for (const TCHAR* line : { TEXT("Unhandled exception. System.InvalidOperationException: Project token missing."), TEXT(" ---> System.IO.IOException: Token file locked."),
+  TEXT("   at Prosetta.Sync.Program.Main(String[] args) in /src/Program.cs:line 42"), TEXT("   --- End of inner exception stack trace ---"), TEXT("   at Prosetta.Sync.Program.<Main>(String[] args)\r") })
+  diagnostic = UProsettaWatchSubsystem::SelectDiagnostic(diagnostic, line);
+ TestEqual(TEXT("exception message kept"), diagnostic, FString(TEXT("Unhandled exception. System.InvalidOperationException: Project token missing.")));
+ TestEqual(TEXT("a later message replaces it"), UProsettaWatchSubsystem::SelectDiagnostic(diagnostic, TEXT("Config file not found.")), FString(TEXT("Config file not found.")));
+ TestEqual(TEXT("help hint ignored"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT("Bad option."), TEXT("Run prosetta-sync --help for usage.")), FString(TEXT("Bad option.")));
+ TestEqual(TEXT("frame alone is not a diagnostic"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT(""), TEXT("   at X.Y()")), FString());
+ TestEqual(TEXT("indented first line kept"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT(""), TEXT("  warning: slow disk")), FString(TEXT("warning: slow disk")));
+ TestEqual(TEXT("unindented 'At' message is not a frame"), UProsettaWatchSubsystem::SelectDiagnostic(TEXT(""), TEXT("At least one volume is required.")), FString(TEXT("At least one volume is required.")));
+
  // Arguments mirror the CLI's usage checks ( which otherwise exit with code 2 ).
  FString arguments, error;
  TestTrue(TEXT("default live watch"), UProsettaWatchSubsystem::BuildWatchArguments(TEXT("/cfg/config.json"), TEXT("live"), TEXT(""), true, arguments, error));
@@ -471,6 +483,49 @@ bool FProsettaWatchCLITest::RunTest(const FString& InParameters)
  return true;
 }
 #if PLATFORM_MAC || PLATFORM_LINUX
+namespace
+{
+/** Polls Condition each frame until it holds or Timeout elapses ( from when the command first runs ), then calls Done. */
+class FProsettaWaitCommand : public IAutomationLatentCommand
+{
+public:
+ FProsettaWaitCommand(TFunction<bool()> InCondition, TFunction<void(bool)> InDone, double InTimeout = 10)
+  : Condition(MoveTemp(InCondition)), Done(MoveTemp(InDone)), Timeout(InTimeout) {}
+ virtual bool Update() override
+ {
+  if (Started < 0) Started = FPlatformTime::Seconds();
+  const bool bMet = Condition();
+  if (!bMet && FPlatformTime::Seconds() - Started < Timeout) return false;
+  Done(bMet);
+  return true;
+ }
+private:
+ TFunction<bool()> Condition;
+ TFunction<void(bool)> Done;
+ double Timeout;
+ double Started = -1;
+};
+/** Waits for the watch status to contain Expected, records it, then runs Then. */
+IAutomationLatentCommand* WaitForStatus(FAutomationTestBase* Test, UProsettaWatchSubsystem* Watch, const FString& Expected, TFunction<void()> Then = nullptr, double Timeout = 10)
+{
+ return new FProsettaWaitCommand([Watch, Expected]() { return Watch->GetStatus().Contains(Expected); },
+  [Test, Watch, Expected, Then](bool bMet)
+  {
+   Test->AddInfo(TEXT("Sidecar status: ") + Watch->GetStatus());
+   Test->TestTrue(TEXT("status reached: ") + Expected, bMet);
+   if (Then) Then();
+  }, Timeout);
+}
+FString WriteCLIScript(const FString& Root, const FString& Name, const FString& Body)
+{
+ const FString path = Root / Name;
+ FFileHelper::SaveStringToFile(TEXT("#!/bin/sh\n") + Body, *path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+ int32 chmodExit = -1;
+ FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + path + TEXT("\"")), &chmodExit, nullptr, nullptr);
+ return path;
+}
+}
+
 class FProsettaSidecarCommand : public IAutomationLatentCommand
 {
 public:
@@ -513,42 +568,18 @@ bool FProsettaSidecarTest::RunTest(const FString& InParameters)
  const TSharedRef<FFixtureCleanup> cleanup = MakeShared<FFixtureCleanup>();
  cleanup->Track(fixture);
  const FString eventPath = fixture.Root / TEXT("event.ndjson");
- const FString executable = fixture.Root / TEXT("fixture-sidecar.sh");
  const FString config = fixture.Root / TEXT("config.json");
  FFileHelper::SaveStringToFile(fixture.Event + TEXT("\n"), *eventPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
  FFileHelper::SaveStringToFile(TEXT("{}"), *config);
  const FString argsPath = fixture.Root / TEXT("args.txt");
- const FString script = TEXT("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\nprintf '%s\\n' \"$*\" > \"") + argsPath +
-  TEXT("\"\ncat \"") + eventPath + TEXT("\"\nsleep 30\n");
- FFileHelper::SaveStringToFile(script, *executable, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
- int32 chmodExit = -1;
- FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + executable + TEXT("\"")), &chmodExit, nullptr, nullptr);
+ const FString executable = WriteCLIScript(fixture.Root, TEXT("fixture-sidecar.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\nprintf '%s\\n' \"$*\" > \"") + argsPath +
+  TEXT("\"\ncat \"") + eventPath + TEXT("\"\nsleep 30\n"));
  UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
  if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
  if (!TestTrue(TEXT("real sidecar process launches"), watch->StartWatch(executable, config, TEXT("")))) return false;
  AddCommand(new FProsettaSidecarCommand(this, watch, fixture, cleanup));
  return true;
 }
-
-class FProsettaSidecarExitCommand : public IAutomationLatentCommand
-{
-public:
- FProsettaSidecarExitCommand(FAutomationTestBase* InTest, UProsettaWatchSubsystem* InWatch, const FString& InExpected)
-  : Test(InTest), Watch(InWatch), Expected(InExpected), Started(FPlatformTime::Seconds()) {}
- virtual bool Update() override
- {
-  if (!Watch->GetStatus().StartsWith(TEXT("CLI ")) && FPlatformTime::Seconds() - Started < 10) return false;
-  Test->AddInfo(TEXT("Sidecar status: ") + Watch->GetStatus());
-  Test->TestTrue(TEXT("CLI exit surfaced with its diagnostic"), Watch->GetStatus().Contains(Expected));
-  Watch->StopWatch();
-  return true;
- }
-private:
- FAutomationTestBase* Test;
- UProsettaWatchSubsystem* Watch;
- FString Expected;
- double Started;
-};
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSidecarExitTest, "Inkpot.Prosetta.WatchSidecarExit",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -559,34 +590,135 @@ bool FProsettaSidecarExitTest::RunTest(const FString& InParameters)
  IFileManager::Get().MakeDirectory(*root, true);
  const FString config = root / TEXT("config.json");
  FFileHelper::SaveStringToFile(TEXT("{}"), *config);
- const auto WriteScript = [&root](const FString& Name, const FString& Body)
- {
-  const FString path = root / Name;
-  FFileHelper::SaveStringToFile(TEXT("#!/bin/sh\n") + Body, *path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
-  int32 chmodExit = -1;
-  FPlatformProcess::ExecProcess(TEXT("/bin/chmod"), *(TEXT("700 \"") + path + TEXT("\"")), &chmodExit, nullptr, nullptr);
-  return path;
- };
  UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
- if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) return false;
+ if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
 
- // A pre-watch CLI is refused before it is ever launched with `watch`.
- const FString old = WriteScript(TEXT("old-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.9.0; exit 0; fi\ntouch \"") + root + TEXT("/launched\"\n"));
- TestFalse(TEXT("0.9.0 CLI refused"), watch->StartWatch(old, config, TEXT("")));
- TestTrue(TEXT("version requirement explained"), watch->GetStatus().Contains(TEXT("0.10.0")) && watch->GetStatus().Contains(TEXT("0.9.0")));
- TestFalse(TEXT("old CLI never ran watch"), FPaths::FileExists(root / TEXT("launched")));
-
- // Plugin-side usage checks fail fast without launching.
+ // Plugin-side usage checks fail fast without launching anything.
+ const FString old = WriteCLIScript(root, TEXT("old-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.9.0; exit 0; fi\ntouch \"") + root + TEXT("/launched\"\n"));
  TestFalse(TEXT("fixed tag refused"), watch->StartWatch(old, config, TEXT(""), TEXT("live"), TEXT("core@1.0")));
  TestTrue(TEXT("fixed tag explained"), watch->GetStatus().Contains(TEXT("one-shot sync")));
+ TestFalse(TEXT("usage error runs no version check"), watch->IsCheckingVersion());
+
+ // A pre-watch CLI is refused once its version check answers, before it is ever launched with `watch`.
+ if (!TestTrue(TEXT("0.9.0 version check starts"), watch->StartWatch(old, config, TEXT("")))) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
+ TestTrue(TEXT("version check pending"), watch->IsCheckingVersion());
+ AddCommand(WaitForStatus(this, watch, TEXT("requires Prosetta Sync CLI"), [this, watch, root]()
+ {
+  TestTrue(TEXT("version requirement explained"), watch->GetStatus().Contains(TEXT("0.10.0")) && watch->GetStatus().Contains(TEXT("0.9.0")));
+  TestFalse(TEXT("version check finished"), watch->IsCheckingVersion());
+  TestFalse(TEXT("old CLI never ran watch"), FPaths::FileExists(root / TEXT("launched")));
+ }));
 
  // A CLI usage error ( exit 2, stderr ) is reported once the process exits; NDJSON before it still counts.
- const FString rejecting = WriteScript(TEXT("rejecting-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\n")
+ const FString rejecting = WriteCLIScript(root, TEXT("rejecting-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 0.10.0; exit 0; fi\n")
   TEXT("echo '{\"schemaVersion\":1,\"type\":\"error\",\"projectId\":1,\"channel\":\"live\",\"code\":\"STREAM_RECONNECTING\"}'\n")
   TEXT("echo 'Watch each latest-release volume with its own cache.' >&2\necho 'Run prosetta-sync --help for usage.' >&2\nexit 2\n"));
- if (!TestTrue(TEXT("0.10.0 CLI launches"), watch->StartWatch(rejecting, config, TEXT(""), TEXT("latest-release"), TEXT("core"), false))) return false;
- TestTrue(TEXT("launch status names channel and version"), watch->GetStatus().Contains(TEXT("latest-release")) && watch->GetStatus().Contains(TEXT("0.10.0")));
- AddCommand(new FProsettaSidecarExitCommand(this, watch, TEXT("CLI rejected the watch arguments: Watch each latest-release volume with its own cache.")));
+ AddCommand(new FFunctionLatentCommand([this, watch, rejecting, config]()
+ {
+  TestTrue(TEXT("0.10.0 CLI starts"), watch->StartWatch(rejecting, config, TEXT(""), TEXT("latest-release"), TEXT("core"), false));
+  return true;
+ }));
+ AddCommand(WaitForStatus(this, watch, TEXT("CLI rejected the watch arguments: Watch each latest-release volume with its own cache."), [watch]() { watch->StopWatch(); }));
+
+ // An unhandled .NET exception reports its message, not the last stack frame. Its `--version` also
+ // prints a stderr notice first, which must not be read as the version.
+ const FString crashing = WriteCLIScript(root, TEXT("crashing-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 'Welcome to .NET!' >&2; echo 0.11.0; exit 0; fi\n")
+  TEXT("echo 'Unhandled exception. System.InvalidOperationException: Project token missing.' >&2\n")
+  TEXT("echo ' ---> System.IO.IOException: Token file locked.' >&2\n")
+  TEXT("echo '   at Prosetta.Sync.Program.Main(String[] args) in /src/Program.cs:line 42' >&2\n")
+  TEXT("echo '   --- End of inner exception stack trace ---' >&2\n")
+  TEXT("echo '   at Prosetta.Sync.Program.<Main>(String[] args)' >&2\nexit 1\n"));
+ AddCommand(new FFunctionLatentCommand([this, watch, crashing, config]()
+ {
+  TestTrue(TEXT("crashing CLI starts"), watch->StartWatch(crashing, config, TEXT("")));
+  return true;
+ }));
+ AddCommand(WaitForStatus(this, watch, TEXT("CLI exited with code 1"), [this, watch, root]()
+ {
+  TestTrue(TEXT("exception message surfaced"), watch->GetStatus().Contains(TEXT("code 1: Unhandled exception. System.InvalidOperationException: Project token missing.")));
+  TestFalse(TEXT("stack frame not surfaced"), watch->GetStatus().Contains(TEXT("Program.")));
+  watch->StopWatch();
+  IFileManager::Get().DeleteDirectory(*root, false, true);
+ }));
+ return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchVersionCheckTest, "Inkpot.Prosetta.WatchVersionCheck",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchVersionCheckTest::RunTest(const FString& InParameters)
+{
+ const FString root = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("ProsettaWatchTests") / (TEXT("version-") + FGuid::NewGuid().ToString()));
+ IFileManager::Get().MakeDirectory(*root, true);
+ const FString config = root / TEXT("config.json");
+ FFileHelper::SaveStringToFile(TEXT("{}"), *config);
+ UProsettaWatchSubsystem* watch = GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>();
+ if (!TestNotNull(TEXT("shipping editor subsystem registered"), watch)) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
+
+ // A slow `--version` ( a cold .NET start ) must not block the editor: StartWatch returns at once
+ // and the watch launches from the ticker when the check passes.
+ const FString launched = root / TEXT("launched");
+ const FString slow = WriteCLIScript(root, TEXT("slow-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then sleep 2; echo 0.10.0; exit 0; fi\ntouch \"") + launched + TEXT("\"\nexec sleep 30\n"));
+ const double before = FPlatformTime::Seconds();
+ if (!TestTrue(TEXT("slow CLI version check starts"), watch->StartWatch(slow, config, TEXT("")))) { IFileManager::Get().DeleteDirectory(*root, false, true); return false; }
+ TestTrue(TEXT("StartWatch does not wait for --version"), FPlatformTime::Seconds() - before < 1.0);
+ TestTrue(TEXT("version check pending"), watch->IsCheckingVersion());
+ TestTrue(TEXT("status reports the check"), watch->GetStatus().StartsWith(TEXT("Checking Prosetta Sync CLI version")));
+ TestFalse(TEXT("watch not launched before the check passes"), FPaths::FileExists(launched));
+ AddCommand(WaitForStatus(this, watch, TEXT("Watching live (CLI 0.10.0)"), [this, watch]()
+ {
+  TestFalse(TEXT("version check finished"), watch->IsCheckingVersion());
+ }, 15));
+ AddCommand(new FProsettaWaitCommand([launched]() { return FPaths::FileExists(launched); }, [this, watch](bool bMet)
+ {
+  TestTrue(TEXT("watch launched after the check passed"), bMet);
+  watch->StopWatch();
+ }));
+
+ // A CLI that never answers is abandoned after the timeout and never launched.
+ const FString hungLaunched = root / TEXT("hung-launched");
+ const FString hung = WriteCLIScript(root, TEXT("hung-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then exec sleep 30; fi\ntouch \"") + hungLaunched + TEXT("\"\nexec sleep 30\n"));
+ const float timeout = watch->VersionCheckTimeoutSeconds;
+ AddCommand(new FFunctionLatentCommand([this, watch, hung, config]()
+ {
+  watch->VersionCheckTimeoutSeconds = 1.0f;
+  TestTrue(TEXT("hung CLI version check starts"), watch->StartWatch(hung, config, TEXT("")));
+  return true;
+ }));
+ AddCommand(WaitForStatus(this, watch, TEXT("did not answer --version within 1 s"), [this, watch, hungLaunched, timeout]()
+ {
+  watch->VersionCheckTimeoutSeconds = timeout;
+  TestFalse(TEXT("timed out check abandoned"), watch->IsCheckingVersion());
+  TestFalse(TEXT("hung CLI never ran watch"), FPaths::FileExists(hungLaunched));
+ }));
+
+ // A `--version` that fails ( e.g. the .NET runtime is missing ) is reported as a failure, not as an old CLI.
+ const FString brokenLaunched = root / TEXT("broken-launched");
+ const FString broken = WriteCLIScript(root, TEXT("broken-cli.sh"), TEXT("if [ \"$1\" = \"--version\" ]; then echo 'runtime missing' >&2; exit 150; fi\ntouch \"") + brokenLaunched + TEXT("\"\n"));
+ AddCommand(new FFunctionLatentCommand([this, watch, broken, config]()
+ {
+  TestTrue(TEXT("broken CLI version check starts"), watch->StartWatch(broken, config, TEXT("")));
+  return true;
+ }));
+ AddCommand(WaitForStatus(this, watch, TEXT("`--version` exited with code 150"), [this, brokenLaunched]()
+ {
+  TestFalse(TEXT("broken CLI never ran watch"), FPaths::FileExists(brokenLaunched));
+ }));
+
+ // Stopping during the check cancels it.
+ AddCommand(new FFunctionLatentCommand([this, watch, slow, config, launched]()
+ {
+  IFileManager::Get().Delete(*launched);
+  TestTrue(TEXT("check restarts"), watch->StartWatch(slow, config, TEXT("")));
+  watch->StopWatch();
+  TestFalse(TEXT("stop cancels the check"), watch->IsCheckingVersion());
+  return true;
+ }));
+ AddCommand(new FProsettaWaitCommand([]() { return false; }, [this, launched, root](bool)
+ {
+  TestFalse(TEXT("cancelled check never launches watch"), FPaths::FileExists(launched));
+  IFileManager::Get().DeleteDirectory(*root, false, true);
+ }, 3));
  return true;
 }
 #endif

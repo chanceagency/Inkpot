@@ -1,6 +1,30 @@
 #include "Inkpot/Prosetta/ProsettaLine.h"
 #include "Inkpot/InkpotStory.h"
 
+namespace
+{
+	// One character of a canonical language code: lowercase, '_' read as '-'. Shared by
+	// NormalizeLanguageCode and LanguageCodeEquals so the two cannot drift apart.
+	TCHAR NormalizeLanguageCodeChar(TCHAR InChar)
+	{
+		return InChar == TEXT('_') ? TEXT('-') : FChar::ToLower(InChar);
+	}
+
+	// True when InKey normalises ( UProsettaLine::NormalizeLanguageCode ) to InNormalized, without allocating.
+	bool LanguageCodeEquals(FStringView InKey, FStringView InNormalized)
+	{
+		InKey = InKey.TrimStartAndEnd();
+		if (InKey.Len() != InNormalized.Len())
+			return false;
+		for (int32 i = 0; i < InKey.Len(); ++i)
+		{
+			if (NormalizeLanguageCodeChar(InKey[i]) != InNormalized[i])
+				return false;
+		}
+		return true;
+	}
+}
+
 void UProsettaLine::Initialise(FName InLineId, const FString& InText, const TMap<FName, FString>& InAttributes, int32 InStart, int32 InLength)
 {
 	LineId = InLineId;
@@ -50,17 +74,52 @@ bool UProsettaLine::RenderTemplate(const FString& InTemplate, FString& OutText) 
 	}
 
 	UInkpotStory* story = GetTypedOuter<UInkpotStory>();
-	const FProsettaInlineTemplate parsed(InTemplate);
+	// Rendering only: skip the alignment ExtractValues would need.
+	const FProsettaInlineTemplate parsed(InTemplate, FProsettaInlineTemplate::EUsage::RenderOnly);
 	return parsed.Render(&TemplateValues, [story](FStringView InName, FString& OutValue)
 	{
 		return FProsettaInlineTemplate::ResolveStoryVariable(story, InName, OutValue);
 	}, OutText);
 }
 
+FString UProsettaLine::NormalizeLanguageCode(const FString& InLanguageCode)
+{
+	FString code = InLanguageCode.TrimStartAndEnd();
+	for (TCHAR& ch : code)
+		ch = NormalizeLanguageCodeChar(ch);
+	return code;
+}
+
+const FString* UProsettaLine::FindLocalization(const FString& InLanguageCode) const
+{
+	// Sidecar keys may be written "pt-BR", "pt_BR" or "pt-br"; compare normalised forms.
+	const FString requested = NormalizeLanguageCode(InLanguageCode);
+	if (requested.IsEmpty())
+		return nullptr;
+	const FString* exact = Metadata.Localizations.Find(InLanguageCode);
+	if (exact && !exact->IsEmpty())
+		return exact;
+
+	// A regional request falls back through its parents ( "zh-hant-tw" to "zh-hant" to "zh" ).
+	FStringView code(requested);
+	for (;;)
+	{
+		for (const TPair<FString, FString>& pair : Metadata.Localizations)
+		{
+			if (!pair.Value.IsEmpty() && LanguageCodeEquals(pair.Key, code))
+				return &pair.Value;
+		}
+		int32 dash;
+		if (!code.FindLastChar(TEXT('-'), dash) || dash == 0)
+			return nullptr;
+		code.LeftInline(dash);
+	}
+}
+
 bool UProsettaLine::GetLocalizedText(const FString& InLanguageCode, FString& OutText) const
 {
-	const FString* translation = Metadata.Localizations.Find(InLanguageCode);
-	if (translation && !translation->IsEmpty() && RenderTemplate(*translation, OutText))
+	const FString* translation = FindLocalization(InLanguageCode);
+	if (translation && RenderTemplate(*translation, OutText))
 		return true;
 	OutText = Text;
 	return false;

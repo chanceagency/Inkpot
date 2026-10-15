@@ -60,8 +60,17 @@ public:
 	/** Resolves a variable name to its display text. Returns false when unknown. */
 	using FVariableResolver = TFunctionRef<bool(FStringView /*VariableName*/, FString& /*OutText*/)>;
 
+	/** What a parsed template will be used for. */
+	enum class EUsage : uint8
+	{
+		/** ExtractValues and Render: the alignment is built once, up front ( cached templates ). */
+		ExtractAndRender,
+		/** Render only: no alignment is built; ExtractValues still works but builds it per call. */
+		RenderOnly,
+	};
+
 	FProsettaInlineTemplate() = default;
-	explicit FProsettaInlineTemplate(FString InSource);
+	explicit FProsettaInlineTemplate(FString InSource, EUsage InUsage = EUsage::ExtractAndRender);
 
 	/** Cheap pre-check: true when the text could contain an {expression}. */
 	static bool MayContainExpressions(FStringView InText);
@@ -78,6 +87,9 @@ public:
 	const FString& GetSource() const { return Source; }
 	bool HasExpressions() const { return ExpressionCount > 0; }
 	int32 NumExpressions() const { return ExpressionCount; }
+
+	/** True when the alignment ExtractValues uses was built at construction. */
+	bool IsAligned() const { return !Alignment.Literals.IsEmpty(); }
 
 	/** The trimmed text of each expression placeholder, in source order. */
 	TArray<FStringView, TInlineAllocator<8>> GetExpressions() const;
@@ -120,7 +132,7 @@ private:
 	};
 
 	void Parse();
-	void BuildAlignment();
+	void BuildAlignment(FAlignment& OutAlignment) const;
 	FStringView SegmentView(const FSegment& InSegment) const;
 	bool RenderInternal(const FProsettaTemplateValues* InValues, const FVariableResolver* InResolver, int32 InDepth, FString& OutText) const;
 

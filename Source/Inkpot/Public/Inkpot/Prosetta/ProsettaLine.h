@@ -98,11 +98,19 @@ public:
 	/**
 	 * GetLocalizedText
 	 * The player-facing text for this line in the given language, from the sidecar
-	 * localizations with inline expressions rendered. Falls back to GetText() and
-	 * returns false when no translation exists or one of its expressions is unresolved.
+	 * localizations with inline expressions rendered. Language codes are matched case
+	 * and separator insensitively ( "pt_BR", "pt-br" and "PT-BR" are one language ),
+	 * and a regional code with no translation of its own falls back through its
+	 * parents ( "pt-br" to "pt", "zh-hant-tw" to "zh-hant" to "zh" ). Falls back to
+	 * GetText() and returns false when no translation exists or one of its
+	 * expressions is unresolved.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Inkpot|Prosetta")
 	bool GetLocalizedText(const FString& InLanguageCode, FString& OutText) const;
+
+	/** Canonical language code: trimmed, lowercase, '_' replaced by '-' ( "pt_BR" -> "pt-br" ). */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
+	static FString NormalizeLanguageCode(const FString& InLanguageCode);
 
 	/** Offset of this segment's text within the cleaned fragment. */
 	UFUNCTION(BlueprintPure, Category="Inkpot|Prosetta")
@@ -113,6 +121,9 @@ public:
 	int32 GetLength() const;
 
 private:
+	/** The non-empty sidecar translation for a language code ( see GetLocalizedText ), or nullptr. */
+	const FString* FindLocalization(const FString& InLanguageCode) const;
+
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Prosetta")
 	FName LineId;
 
