@@ -17,9 +17,13 @@ struct FFileChangeData;
  * Unreal's DirectoryWatcher callback only raises a flag; receipts are read on the core ticker and
  * passed to UProsettaWatchSubsystem::ConsumeEvent on the game thread, so manifest verification, Play
  * deferral and replay rejection stay in the importer. Each receipt is handed off once per content,
- * a rejected one is offered again on the next change, and receipts already present when the watch is
- * created are handed off once. The first hand-off calls ConfigureExternalWatch with ResolveDecoder,
- * which takes the transport from a plugin-owned CLI watch.
+ * a receipt ConsumeEvent rejects is offered again on the next change, and receipts already present
+ * when the watch is created are handed off once. A receipt whose generation the importer already has
+ * ( IsGenerationCurrent ) is recorded without a hand-off. Handing off a new generation calls
+ * ConfigureExternalWatch with ResolveDecoder whenever the importer does not have it yet, including
+ * after StartWatch took the transport back, so it stops a plugin-owned CLI watch. A receipt accepted
+ * here whose import later fails ( for example compressed audio without a decoder ) is not offered
+ * again until its content changes; pass a fresh map to HandOffReceipts to offer every receipt again.
  *
  * Create it on the game thread in an interactive editor, never in a commandlet or unattended run that
  * must not replay receipts, and destroy it before the DirectoryWatcher module shuts down.
@@ -47,7 +51,7 @@ public:
   * project starts a producer it owns. Returns false when the importer is unavailable.
   */
  bool Connect();
- /** Scans the directory now, without waiting for a change notification; returns how many receipts the importer accepted. */
+ /** Scans the directory now, without waiting for a change notification; returns how many new generations the importer accepted. */
  int32 Poll();
  /** True for a schemaVersion 1 `generation-completed` event; other events and malformed JSON never import. */
  static bool IsCompletionReceipt(const FString& JSON);

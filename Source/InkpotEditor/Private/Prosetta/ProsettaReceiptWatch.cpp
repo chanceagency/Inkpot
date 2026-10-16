@@ -79,7 +79,8 @@ void FProsettaReceiptWatch::OnDirectoryChanged(const TArray<FFileChangeData>& Ch
 
 void FProsettaReceiptWatch::ConnectImporter(UProsettaWatchSubsystem& Importer)
 {
- if (Connected.Get() == &Importer) return;
+ // StartWatch takes the transport back from an earlier connection; a new receipt retakes it.
+ if (Connected.Get() == &Importer && Importer.HasExternalWatch()) return;
  Importer.ConfigureExternalWatch(ResolveDecoder);
  Connected = &Importer;
 }
@@ -98,10 +99,16 @@ int32 FProsettaReceiptWatch::Poll()
 {
  UProsettaWatchSubsystem* importer = GetImporter();
  if (!importer) return 0;
- const int32 accepted = HandOffReceipts(Directory, Seen, [this, importer](const FString& JSON)
+ int32 accepted = 0;
+ HandOffReceipts(Directory, Seen, [this, importer, &accepted](const FString& JSON)
  {
+  // A receipt the importer already has ( e.g. left from an earlier session ) is recorded without
+  // taking the transport, so it never stops a CLI the plugin owns or reports an idle producer.
+  if (importer->IsGenerationCurrent(JSON)) return true;
   ConnectImporter(*importer);
-  return importer->ConsumeEvent(JSON);
+  if (!importer->ConsumeEvent(JSON)) return false;
+  ++accepted;
+  return true;
  });
  if (accepted > 0) UE_LOG(LogTemp, Display, TEXT("Prosetta: Handed %d completed generation(s) to the editor importer."), accepted);
  return accepted;

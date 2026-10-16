@@ -568,12 +568,30 @@ bool FProsettaWatchReceiptTransportTest::RunTest(const FString& InParameters)
  TestEqual(TEXT("the replacing receipt is handed off"), receipts.Poll(), 1);
  TestTrue(TEXT("replacing generation applies"), watch->TryApplyPending());
  TestTrue(TEXT("replacing generation imported"), story(second).Contains(TEXT("Generation 2")));
+ TestTrue(TEXT("the imported generation is current"), watch->IsGenerationCurrent(second.Event));
+ TestTrue(TEXT("an older revision is current"), watch->IsGenerationCurrent(first.Event));
+ TestFalse(TEXT("a non-completion event is never current"), watch->IsGenerationCurrent(TEXT(R"({"schemaVersion":1,"type":"blocked"})")));
 
- // The resolver given to the transport is the one the importer uses for compressed audio.
+ // StartWatch takes the transport back ( a failed launch still does ).
+ TestFalse(TEXT("a launch without a CLI fails"), watch->StartWatch(TEXT(""), TEXT(""), TEXT("")));
+ TestFalse(TEXT("StartWatch takes the transport back"), watch->HasExternalWatch());
+ {
+  // A receipt left from an earlier session whose generation is already imported neither replays nor takes the transport.
+  FProsettaReceiptWatch restarted(directory, nullptr, [&watch]() { return watch.Get(); });
+  TestEqual(TEXT("a current receipt at startup hands off nothing"), restarted.Poll(), 0);
+  TestFalse(TEXT("a current receipt at startup keeps the plugin's transport"), watch->HasExternalWatch());
+  TestFalse(TEXT("a current receipt at startup reports no idle producer"), watch->GetStatus().Contains(TEXT("External CLI watch connected")));
+  TestEqual(TEXT("nothing is queued for a current receipt"), watch->GetPendingCount(), 0);
+ }
+
+ // A new receipt after StartWatch retakes the transport with the transport's resolver, which the importer uses for compressed audio.
  const FFixture compressed = Generation(scope, TEXT("3"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
  cleanup.Track(compressed);
+ TestFalse(TEXT("a new generation is not current"), watch->IsGenerationCurrent(compressed.Event));
  TestTrue(TEXT("compressed receipt written"), FFileHelper::SaveStringToFile(compressed.Event, *file));
  TestEqual(TEXT("compressed receipt is handed off"), receipts.Poll(), 1);
+ TestTrue(TEXT("a new receipt retakes the transport after StartWatch"), watch->HasExternalWatch());
+ TestTrue(TEXT("a queued generation is current"), watch->IsGenerationCurrent(compressed.Event));
  TestFalse(TEXT("compressed audio without a decoder fails"), watch->TryApplyPending());
  TestEqual(TEXT("the transport's resolver is asked for a decoder"), resolves, 1);
 

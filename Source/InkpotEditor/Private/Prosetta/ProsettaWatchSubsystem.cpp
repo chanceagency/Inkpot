@@ -115,6 +115,7 @@ void UProsettaWatchSubsystem::Deinitialize()
 {
  StopWatch();
  DecoderResolver = nullptr;
+ bExternalWatch = false;
  FTSTicker::GetCoreTicker().RemoveTicker(Ticker);
  Super::Deinitialize();
 }
@@ -124,6 +125,7 @@ bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FSt
  StopWatch();
  // The plugin owns the transport again, whether or not this launch succeeds.
  DecoderResolver = nullptr;
+ bExternalWatch = false;
  if (FPaths::IsRelative(CLIExecutable) || FPaths::IsRelative(ConfigFile) || !FPaths::FileExists(CLIExecutable) || !FPaths::FileExists(ConfigFile))
  { Status = TEXT("Watch requires absolute CLI and configuration file paths."); return false; }
  FString arguments, error;
@@ -312,7 +314,32 @@ void UProsettaWatchSubsystem::ConfigureExternalWatch(FProsettaDecoderResolver Re
  StopWatch();
  Decoder.Empty();
  DecoderResolver = MoveTemp(ResolveDecoder);
+ bExternalWatch = true;
  Status = TEXT("External CLI watch connected; waiting for a completed generation.");
+}
+
+bool UProsettaWatchSubsystem::IsGenerationCurrent(const FString& EventJSON) const
+{
+ if (!ensureMsgf(IsInGameThread(), TEXT("UProsettaWatchSubsystem::IsGenerationCurrent must be called on the game thread."))) return false;
+ TSharedPtr<FJsonObject> event;
+ FString type, name;
+ int32 version = 0;
+ if (!Parse(EventJSON, event) || !event->TryGetNumberField(TEXT("schemaVersion"), version) || version != 1 ||
+     !event->TryGetStringField(TEXT("type"), type) || type != TEXT("generation-completed") || !EventNamespace(event, name)) return false;
+ const FString id = event->GetStringField(TEXT("generationId"));
+ auto covers = [&event, &id](const FString& PriorId, const FString& PriorJSON)
+ {
+  TSharedPtr<FJsonObject> prior;
+  return PriorId == id || (Parse(PriorJSON, prior) && OlderRevision(event, prior));
+ };
+ if (const FString* queued = Pending.Find(name))
+ {
+  TSharedPtr<FJsonObject> queuedEvent;
+  if (Parse(*queued, queuedEvent) && covers(queuedEvent->GetStringField(TEXT("generationId")), *queued)) return true;
+ }
+ const FString statePath = TEXT("/Game/Prosetta/") + name / TEXT("Generation");
+ const UProsettaGenerationAsset* state = LoadObject<UProsettaGenerationAsset>(nullptr, *(statePath + TEXT(".Generation")), nullptr, LOAD_NoWarn);
+ return state && state->Namespace == name && covers(state->GenerationId, state->Provenance);
 }
 
 bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
