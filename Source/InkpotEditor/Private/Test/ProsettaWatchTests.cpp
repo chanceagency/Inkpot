@@ -450,9 +450,36 @@ bool FProsettaWatchExternalDecoderTest::RunTest(const FString& InParameters)
   UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
   TestTrue(TEXT("previous story retained"), story && story->GetCompiledJSON().Contains(TEXT("Generation 1")));
  }
- watch->ConsumeEvent(compressed.Event);
- TestFalse(TEXT("retried generation still fails"), watch->TryApplyPending());
+ const FFixture retried = Generation(scope, TEXT("3"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ cleanup.Track(retried);
+ watch->ConsumeEvent(retried.Event);
+ TestFalse(TEXT("next generation still fails"), watch->TryApplyPending());
  TestEqual(TEXT("a failed resolution is retried by the next generation"), resolves, 2);
+
+ FString resolved = TEXT("ffmpeg");
+ resolves = 0;
+ watch->ConfigureExternalWatch([&resolves, &resolved](FString& OutExecutable, FString& OutError) { ++resolves; OutExecutable = resolved; return true; });
+ const FFixture relativeDecoder = Generation(scope, TEXT("4"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ cleanup.Track(relativeDecoder);
+ watch->ConsumeEvent(relativeDecoder.Event);
+ TestFalse(TEXT("relative resolver result is rejected"), watch->TryApplyPending());
+ TestTrue(TEXT("rejected resolver result reports a reason"), watch->GetStatus().Contains(TEXT("no absolute FFmpeg executable")));
+ TestEqual(TEXT("relative resolver result resolves once"), resolves, 1);
+#if PLATFORM_MAC || PLATFORM_LINUX
+ // /usr/bin/false stands in for FFmpeg: it resolves and runs, then the decode itself fails.
+ resolved = TEXT("/usr/bin/false");
+ const FFixture located = Generation(scope, TEXT("5"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ cleanup.Track(located);
+ watch->ConsumeEvent(located.Event);
+ TestFalse(TEXT("stand-in decoder fails the decode"), watch->TryApplyPending());
+ TestTrue(TEXT("decode failure is surfaced"), watch->GetStatus().Contains(TEXT("Selected audio decode failed")));
+ TestEqual(TEXT("a rejected result is re-resolved"), resolves, 2);
+ const FFixture cached = Generation(scope, TEXT("6"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ cleanup.Track(cached);
+ watch->ConsumeEvent(cached.Event);
+ TestFalse(TEXT("cached stand-in decoder fails the decode"), watch->TryApplyPending());
+ TestEqual(TEXT("an existing resolved decoder is reused"), resolves, 2);
+#endif
  return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchCLITest, "Inkpot.Prosetta.WatchCLI",

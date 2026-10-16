@@ -41,8 +41,8 @@ For general support and chat with other users, check out [Inkle's discord](https
 ## Changelog  
 
 ### Prosetta-specific changes (1.46.24)
-`UProsettaWatchSubsystem::ConfigureExternalWatch(ResolveDecoder)` hands the watch transport to a process the project owns (for example a terminal wrapper whose completion receipts reach `ConsumeEvent`), stopping any plugin-owned CLI while keeping the same verified, deferred importer. The resolver locates an FFmpeg executable only when a generation first carries compressed audio, so WAV-only projects never look for one; a failed resolution keeps the previous generation, reports the resolver's error and is retried by the next generation. Covered by `Inkpot.Prosetta.WatchExternalDecoder`.<br>
-`UProsettaWatchSubsystem::OnGenerationAccepted` is a static delegate broadcast on the game thread once per newly accepted generation, after its registry is saved; replayed events, older revisions and failed imports are never announced. Editor modules can subscribe before the subsystem exists to refresh assets derived from a generation. Covered by `Inkpot.Prosetta.Watch`.<br>
+`UProsettaWatchSubsystem::ConfigureExternalWatch(ResolveDecoder)` hands the watch transport to a process the project owns (for example a terminal wrapper whose completion receipts reach `ConsumeEvent`), stopping any plugin-owned CLI while keeping the same verified, deferred importer. The resolver locates an FFmpeg executable only when a generation first carries compressed audio, so WAV-only projects never look for one; the resolver runs synchronously on the game thread, so it returns an existing absolute path without blocking. A failed resolution, a relative or missing result, or a resolved decoder that later disappears keeps the previous generation, reports the reason and is retried by the next generation. `ConsumeEvent` must be called on the game thread; `StartWatch` takes the transport back. Covered by `Inkpot.Prosetta.WatchExternalDecoder`.<br>
+`UProsettaWatchSubsystem::OnGenerationAccepted` is a static delegate broadcast on the game thread once per newly accepted generation, after its registry is saved and its retired assets are cleaned up; replayed events, older revisions and failed imports are never announced. Editor modules can subscribe before the subsystem exists to refresh assets derived from a generation. Covered by `Inkpot.Prosetta.Watch`.<br>
 
 ### Prosetta-specific changes (1.46.23)
 Pause tags: `UInkpotProsettaLibrary::ParsePauseTag`, `FindPauseSeconds` and `GetLinePauseSeconds` (Blueprint-pure) read an Ink line tag `#pause:<seconds>` or its synonym `#wait:<seconds>`, the time to wait after a line finishes (voice and text reveal) before auto-advancing to the next one. The key is case-insensitive, whitespace around the key, colon and value is ignored (`#pause: 0.2`), as is one leading `#` left on the tag string, and the value is a plain non-negative decimal returned as a double (`0`, `.5`, `1.2`); negative or malformed values are ignored, and when a line has several valid pause tags the last one wins. The rules match the Prosetta web player.<br>
@@ -438,11 +438,13 @@ C# remains staged for the Unity integration.
 
 A project that runs the CLI itself, for example through a wrapper that also serves
 a terminal, calls `ConfigureExternalWatch(ResolveDecoder)` once and passes each
-completed-generation event to `ConsumeEvent`. Validation, Play deferral and
-retention are unchanged; the resolver supplies FFmpeg only when compressed audio
-first needs it. Bind `UProsettaWatchSubsystem::OnGenerationAccepted` to refresh
-project assets derived from a generation; it fires once per newly accepted
-generation, never for a replay or an older revision.
+completed-generation event to `ConsumeEvent` on the game thread. Validation,
+Play deferral and retention are unchanged; the resolver supplies an absolute
+FFmpeg path only when compressed audio first needs it, and runs mid-import, so
+locate or download FFmpeg ahead of time rather than inside it. Bind
+`UProsettaWatchSubsystem::OnGenerationAccepted` to refresh project assets
+derived from a generation; it fires once per newly accepted generation, never
+for a replay or an older revision.
 
 The subsystem also exposes these commands to editor Blueprints and C++ through
 `UProsettaWatchSubsystem`. Shipping player builds contain cooked content only;

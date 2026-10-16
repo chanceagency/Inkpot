@@ -104,6 +104,8 @@ namespace
  };
 }
 
+FOnProsettaGenerationAccepted UProsettaWatchSubsystem::OnGenerationAccepted;
+
 void UProsettaWatchSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
  Super::Initialize(Collection);
@@ -112,6 +114,7 @@ void UProsettaWatchSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UProsettaWatchSubsystem::Deinitialize()
 {
  StopWatch();
+ DecoderResolver = nullptr;
  FTSTicker::GetCoreTicker().RemoveTicker(Ticker);
  Super::Deinitialize();
 }
@@ -119,6 +122,8 @@ void UProsettaWatchSubsystem::Deinitialize()
 bool UProsettaWatchSubsystem::StartWatch(const FString& CLIExecutable, const FString& ConfigFile, const FString& AudioDecoder, const FString& Channel, const FString& Volumes, bool bMirror)
 {
  StopWatch();
+ // The plugin owns the transport again, whether or not this launch succeeds.
+ DecoderResolver = nullptr;
  if (FPaths::IsRelative(CLIExecutable) || FPaths::IsRelative(ConfigFile) || !FPaths::FileExists(CLIExecutable) || !FPaths::FileExists(ConfigFile))
  { Status = TEXT("Watch requires absolute CLI and configuration file paths."); return false; }
  FString arguments, error;
@@ -183,7 +188,6 @@ void UProsettaWatchSubsystem::CancelVersionCheck()
 void UProsettaWatchSubsystem::LaunchWatch(const FString& Version)
 {
  Decoder = LaunchDecoder;
- DecoderResolver = nullptr;
  FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
  Process = FPlatformProcess::CreateProc(*LaunchExecutable, *LaunchArguments, false, true, true, nullptr, 0, nullptr, WritePipe);
  if (!Process.IsValid()) { StopWatch(); Status = TEXT("Unable to launch CLI watch."); return; }
@@ -313,6 +317,8 @@ void UProsettaWatchSubsystem::ConfigureExternalWatch(FProsettaDecoderResolver Re
 
 bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
 {
+ // Pending and Status are shared with the ticker: external transports must marshal here.
+ if (!ensureMsgf(IsInGameThread(), TEXT("UProsettaWatchSubsystem::ConsumeEvent must be called on the game thread."))) return false;
  TSharedPtr<FJsonObject> event;
  FString type, name;
  int32 version;
@@ -350,7 +356,6 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
  Status = TEXT("Generation queued until Play stops and editor is idle.");
  return true;
 }
-FOnProsettaGenerationAccepted UProsettaWatchSubsystem::OnGenerationAccepted;
 bool UProsettaWatchSubsystem::TryApplyPending()
 {
  if (Pending.IsEmpty() || !IsSafeToApply()) return false;
@@ -359,17 +364,26 @@ bool UProsettaWatchSubsystem::TryApplyPending()
  Pending.GetKeys(names);
  for (const FString& name : names)
  {
+  // The decoder resolver and accepted listeners may re-enter: skip what they applied, keep what they queued.
+  const FString* queued = Pending.Find(name);
+  if (!queued) continue;
+  const FString event = *queued;
   FString error;
-  const FString event = Pending.FindChecked(name);
-  if (!ApplyGeneration(event, error)) { Status = TEXT("Import failed; previous generation retained: ") + error; Pending.Remove(name); return false; }
-  Pending.Remove(name);
+  UProsettaGenerationAsset* accepted = nullptr;
+  const bool bApplied = ApplyGeneration(event, error, accepted);
+  const TStrongObjectPtr<UProsettaGenerationAsset> announce(accepted);
+  const FString* current = Pending.Find(name);
+  if (current && *current == event) Pending.Remove(name);
+  if (!bApplied) { Status = TEXT("Import failed; previous generation retained: ") + error; return false; }
   CleanupRetiredAssets(name);
   Status = TEXT("Applied generation: ") + name + TEXT(". ") + Status;
+  if (announce.IsValid()) OnGenerationAccepted.Broadcast(*announce.Get());
  }
  return true;
 }
-bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString& OutError)
+bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString& OutError, UProsettaGenerationAsset*& OutAccepted)
 {
+ OutAccepted = nullptr;
  TSharedPtr<FJsonObject> event, manifest;
  FString name;
  if (!Parse(EventJSON, event) || !EventNamespace(event, name)) { OutError = TEXT("Invalid event."); return false; }
@@ -475,10 +489,17 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
    FString wav = candidate.Path;
    if (!relative.EndsWith(TEXT(".wav"), ESearchCase::IgnoreCase))
    {
-    if (Decoder.IsEmpty() && DecoderResolver)
+    if (DecoderResolver && (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)))
     {
-     FString resolveError;
-     if (!DecoderResolver(Decoder, resolveError)) { Decoder.Empty(); OutError = TEXT("Audio decoder unavailable: ") + resolveError.Left(512); return false; }
+     // Re-resolved whenever the cached decoder is missing; only an existing absolute path is kept.
+     Decoder.Empty();
+     FString resolved, resolveError;
+     if (!DecoderResolver(resolved, resolveError) || FPaths::IsRelative(resolved) || !FPaths::FileExists(resolved))
+     {
+      OutError = TEXT("Audio decoder unavailable: ") + (resolveError.IsEmpty() ? FString(TEXT("the resolver found no absolute FFmpeg executable.")) : resolveError.Left(512));
+      return false;
+     }
+     Decoder = resolved;
     }
     if (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)) { OutError = TEXT("Compressed audio needs an absolute FFmpeg executable ( StartWatch's AudioDecoder or ConfigureExternalWatch's resolver )."); return false; }
     const FString stage = FPaths::ProjectSavedDir() / TEXT("ProsettaAudioStage");
@@ -642,7 +663,7 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  // Obsolete assets leave the active registry immediately. Referenced objects remain
  // in an editor-only retirement map, preserving user references until explicit cleanup.
  NativeGenerationPaths.Add(name, root);
- OnGenerationAccepted.Broadcast(*state);
+ OutAccepted = state;
  return true;
 }
 
