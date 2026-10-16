@@ -31,6 +31,14 @@ public:
   * resolved decoder that later goes missing, is retried by the next generation.
   */
  void ConfigureExternalWatch(FProsettaDecoderResolver ResolveDecoder);
+ /** True from ConfigureExternalWatch until StartWatch takes the transport back ( or the subsystem shuts down ). */
+ bool HasExternalWatch() const { return bExternalWatch; }
+ /**
+  * True when EventJSON is a completed generation this importer already has: the same or a newer
+  * revision is imported for its namespace, or queued. Such an event would be a no-op in ConsumeEvent.
+  * Must be called on the game thread.
+  */
+ bool IsGenerationCurrent(const FString& EventJSON) const;
  virtual void Initialize(FSubsystemCollectionBase& Collection) override;
  virtual void Deinitialize() override;
  /**
@@ -88,6 +96,8 @@ private:
  FString Decoder;
  /** Set by ConfigureExternalWatch, cleared by StartWatch; fills Decoder whenever it is missing. */
  FProsettaDecoderResolver DecoderResolver;
+ /** See HasExternalWatch; a null resolver ( WAV-only project ) is still an external transport. */
+ bool bExternalWatch = false;
  /** `--version` check started by StartWatch, and the watch it launches once the check passes. */
  FProcHandle VersionProcess;
  void* VersionReadPipe = nullptr;

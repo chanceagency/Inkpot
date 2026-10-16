@@ -1,6 +1,7 @@
 #if !UE_BUILD_SHIPPING
 #include "Misc/AutomationTest.h"
 #include "Prosetta/ProsettaWatchSubsystem.h"
+#include "Prosetta/ProsettaReceiptWatch.h"
 #include "Prosetta/ProsettaChecksum.h"
 #include "Inkpot/Prosetta/ProsettaSyncedArtifact.h"
 #include "Asset/InkpotStoryAsset.h"
@@ -480,6 +481,127 @@ bool FProsettaWatchExternalDecoderTest::RunTest(const FString& InParameters)
  TestFalse(TEXT("cached stand-in decoder fails the decode"), watch->TryApplyPending());
  TestEqual(TEXT("an existing resolved decoder is reused"), resolves, 2);
 #endif
+ return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchReceiptsTest, "Inkpot.Prosetta.WatchReceipts",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchReceiptsTest::RunTest(const FString& InParameters)
+{
+ TestTrue(TEXT("completed receipt enters verified importer"), FProsettaReceiptWatch::IsCompletionReceipt(TEXT(R"({"schemaVersion":1,"type":"generation-completed"})")));
+ TestFalse(TEXT("download progress never imports partial files"), FProsettaReceiptWatch::IsCompletionReceipt(TEXT(R"({"schemaVersion":1,"type":"artifact-downloaded"})")));
+ TestFalse(TEXT("blocked generations never import"), FProsettaReceiptWatch::IsCompletionReceipt(TEXT(R"({"schemaVersion":1,"type":"blocked"})")));
+ TestFalse(TEXT("unknown protocol stays out"), FProsettaReceiptWatch::IsCompletionReceipt(TEXT(R"({"schemaVersion":2,"type":"generation-completed"})")));
+ TestFalse(TEXT("malformed receipt stays out"), FProsettaReceiptWatch::IsCompletionReceipt(TEXT("{")));
+
+ // Hand-off: each receipt reaches the importer once per content, and a rejected one is offered again.
+ const FString directory = FPaths::AutomationTransientDir() / TEXT("ProsettaWatchReceipts") / FGuid::NewGuid().ToString();
+ IFileManager::Get().MakeDirectory(*directory, true);
+ ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*directory, false, true); };
+ auto receipt = [](int32 Revision)
+ {
+  return FString::Printf(TEXT(R"({"schemaVersion":1,"type":"generation-completed","generation":{"revision":%d}})"), Revision);
+ };
+ auto write = [&directory](const TCHAR* Name, const FString& JSON) { return FFileHelper::SaveStringToFile(JSON, *(directory / Name)); };
+ TMap<FString, FString> seen;
+ TArray<FString> consumed;
+ auto accept = [&consumed](const FString& JSON) { consumed.Add(JSON); return true; };
+
+ TestTrue(TEXT("receipt written"), write(TEXT("a.json"), receipt(1)));
+ TestTrue(TEXT("non-completion receipt written"), write(TEXT("blocked.json"), TEXT(R"({"schemaVersion":1,"type":"blocked"})")));
+ TestTrue(TEXT("malformed receipt written"), write(TEXT("broken.json"), TEXT("{")));
+ TestTrue(TEXT("in-flight receipt written"), write(TEXT("c.json.tmp"), receipt(9)));
+ TestEqual(TEXT("only the completion receipt is handed off"), FProsettaReceiptWatch::HandOffReceipts(directory, seen, accept), 1);
+ TestEqual(TEXT("its content reaches the importer"), consumed.Num() > 0 ? consumed.Last() : FString(), receipt(1));
+ TestEqual(TEXT("an unchanged directory hands off nothing"), FProsettaReceiptWatch::HandOffReceipts(directory, seen, accept), 0);
+ TestTrue(TEXT("receipt rewritten with identical content"), write(TEXT("a.json"), receipt(1)));
+ TestEqual(TEXT("identical content is not replayed"), FProsettaReceiptWatch::HandOffReceipts(directory, seen, accept), 0);
+ TestTrue(TEXT("receipt replaced"), write(TEXT("a.json"), receipt(2)));
+ TestEqual(TEXT("replaced content is handed off"), FProsettaReceiptWatch::HandOffReceipts(directory, seen, accept), 1);
+
+ TestTrue(TEXT("second identity written"), write(TEXT("b.json"), receipt(3)));
+ TestEqual(TEXT("a rejected receipt is not recorded"), FProsettaReceiptWatch::HandOffReceipts(directory, seen, [](const FString&) { return false; }), 0);
+ TestEqual(TEXT("a rejected receipt is offered again"), FProsettaReceiptWatch::HandOffReceipts(directory, seen, accept), 1);
+ TestEqual(TEXT("every accepted receipt reached the importer once"), consumed.Num(), 3);
+ return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchReceiptTransportTest, "Inkpot.Prosetta.WatchReceiptTransport",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchReceiptTransportTest::RunTest(const FString& InParameters)
+{
+ const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
+ const FString directory = FPaths::ConvertRelativePathToFull(FPaths::AutomationTransientDir() / TEXT("ProsettaReceiptWatch") / FGuid::NewGuid().ToString());
+ cleanup.TrackDirectory(directory);
+ const FString file = directory / TEXT("receipt.json");
+ const FFixture first = Generation(scope, TEXT("1"), TEXT("live"));
+ cleanup.Track(first);
+ TestTrue(TEXT("receipt written before the watch exists"), FFileHelper::SaveStringToFile(first.Event, *file));
+ int32 resolves = 0;
+ FProsettaReceiptWatch receipts(directory, [&resolves](FString& OutExecutable, FString& OutError) { ++resolves; OutError = TEXT("no decoder in this test"); return false; },
+  [&watch]() { return watch.Get(); });
+ TestTrue(TEXT("directory is watched"), receipts.IsWatching());
+ TestTrue(TEXT("a watched directory reports no error"), receipts.GetError().IsEmpty());
+ TestEqual(TEXT("receipt directory is kept absolute"), receipts.GetDirectory(), directory);
+ TestEqual(TEXT("receipt present at startup is handed off once"), receipts.Poll(), 1);
+ TestEqual(TEXT("handed-off generation is queued in the importer"), watch->GetPendingCount(), 1);
+ TestTrue(TEXT("handed-off generation applies"), watch->TryApplyPending());
+ TestEqual(TEXT("WAV-only generation never resolves the decoder"), resolves, 0);
+ auto story = [](const FFixture& Fixture)
+ {
+  UProsettaGenerationAsset* state = State(Fixture);
+  UInkpotStoryAsset* asset = state ? Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story"))) : nullptr;
+  return asset ? asset->GetCompiledJSON() : FString();
+ };
+ TestTrue(TEXT("receipt generation imported"), story(first).Contains(TEXT("Generation 1")));
+ TestEqual(TEXT("an unchanged receipt is not replayed"), receipts.Poll(), 0);
+ TestTrue(TEXT("receipt rewritten with identical content"), FFileHelper::SaveStringToFile(first.Event, *file));
+ TestEqual(TEXT("identical content is not replayed"), receipts.Poll(), 0);
+
+ const FFixture second = Generation(scope, TEXT("2"), TEXT("live"));
+ cleanup.Track(second);
+ TestTrue(TEXT("in-flight receipt written"), FFileHelper::SaveStringToFile(second.Event, *(file + TEXT(".tmp"))));
+ TestEqual(TEXT("an in-flight receipt is ignored"), receipts.Poll(), 0);
+ TestTrue(TEXT("receipt renamed into place"), IFileManager::Get().Move(*file, *(file + TEXT(".tmp")), true, true));
+ TestEqual(TEXT("the replacing receipt is handed off"), receipts.Poll(), 1);
+ TestTrue(TEXT("replacing generation applies"), watch->TryApplyPending());
+ TestTrue(TEXT("replacing generation imported"), story(second).Contains(TEXT("Generation 2")));
+ TestTrue(TEXT("the imported generation is current"), watch->IsGenerationCurrent(second.Event));
+ TestTrue(TEXT("an older revision is current"), watch->IsGenerationCurrent(first.Event));
+ TestFalse(TEXT("a non-completion event is never current"), watch->IsGenerationCurrent(TEXT(R"({"schemaVersion":1,"type":"blocked"})")));
+
+ // StartWatch takes the transport back ( a failed launch still does ).
+ TestFalse(TEXT("a launch without a CLI fails"), watch->StartWatch(TEXT(""), TEXT(""), TEXT("")));
+ TestFalse(TEXT("StartWatch takes the transport back"), watch->HasExternalWatch());
+ {
+  // A receipt left from an earlier session whose generation is already imported neither replays nor takes the transport.
+  FProsettaReceiptWatch restarted(directory, nullptr, [&watch]() { return watch.Get(); });
+  TestEqual(TEXT("a current receipt at startup hands off nothing"), restarted.Poll(), 0);
+  TestFalse(TEXT("a current receipt at startup keeps the plugin's transport"), watch->HasExternalWatch());
+  TestFalse(TEXT("a current receipt at startup reports no idle producer"), watch->GetStatus().Contains(TEXT("External CLI watch connected")));
+  TestEqual(TEXT("nothing is queued for a current receipt"), watch->GetPendingCount(), 0);
+ }
+
+ // A new receipt after StartWatch retakes the transport with the transport's resolver, which the importer uses for compressed audio.
+ const FFixture compressed = Generation(scope, TEXT("3"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ cleanup.Track(compressed);
+ TestFalse(TEXT("a new generation is not current"), watch->IsGenerationCurrent(compressed.Event));
+ TestTrue(TEXT("compressed receipt written"), FFileHelper::SaveStringToFile(compressed.Event, *file));
+ TestEqual(TEXT("compressed receipt is handed off"), receipts.Poll(), 1);
+ TestTrue(TEXT("a new receipt retakes the transport after StartWatch"), watch->HasExternalWatch());
+ TestTrue(TEXT("a queued generation is current"), watch->IsGenerationCurrent(compressed.Event));
+ TestFalse(TEXT("compressed audio without a decoder fails"), watch->TryApplyPending());
+ TestEqual(TEXT("the transport's resolver is asked for a decoder"), resolves, 1);
+
+ TestTrue(TEXT("connect reaches the importer"), receipts.Connect());
+ TestTrue(TEXT("connect takes the transport back"), watch->GetStatus().Contains(TEXT("External CLI watch connected")));
+ TestEqual(TEXT("reconnecting never replays accepted receipts"), receipts.Poll(), 0);
+
+ FProsettaReceiptWatch orphan(directory, nullptr, []() -> UProsettaWatchSubsystem* { return nullptr; });
+ TestFalse(TEXT("connect without an importer fails"), orphan.Connect());
+ TestEqual(TEXT("poll without an importer hands off nothing"), orphan.Poll(), 0);
  return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchCLITest, "Inkpot.Prosetta.WatchCLI",
