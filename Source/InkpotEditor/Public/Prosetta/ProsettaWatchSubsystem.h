@@ -7,6 +7,11 @@
 
 class UProsettaGenerationAsset;
 
+/** Fired on the game thread once per newly accepted generation, after its registry is saved and retired assets are cleaned up. */
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnProsettaGenerationAccepted, const UProsettaGenerationAsset& /*Generation*/);
+/** Finds an audio decoder executable when a generation first needs one; false with OutError when none is available. */
+using FProsettaDecoderResolver = TFunction<bool(FString& OutExecutable, FString& OutError)>;
+
 /**
  * Editor-only consumer of `prosetta-sync watch` ( Prosetta Sync CLI 0.10.0+ ).
  * Downloads continue in PIE; imports do not. Only generation-completed events import;
@@ -17,6 +22,15 @@ class INKPOTEDITOR_API UProsettaWatchSubsystem : public UEditorSubsystem
 {
  GENERATED_BODY()
 public:
+ /**
+  * Hands transport ownership to an external CLI ( events arrive through ConsumeEvent, on the game
+  * thread ), keeping the same verified, deferred importer until StartWatch takes it back.
+  * ResolveDecoder runs synchronously on the game thread, mid-import, the first time a generation
+  * carries compressed audio, so a decoder is only located when needed: it must return an existing
+  * absolute path without blocking ( fetch ahead of time ). A failed or invalid resolution, or a
+  * resolved decoder that later goes missing, is retried by the next generation.
+  */
+ void ConfigureExternalWatch(FProsettaDecoderResolver ResolveDecoder);
  virtual void Initialize(FSubsystemCollectionBase& Collection) override;
  virtual void Deinitialize() override;
  /**
@@ -40,6 +54,12 @@ public:
  /** True while StartWatch's `--version` check is still running. */
  UFUNCTION(BlueprintPure, Category="Prosetta|Watch") bool IsCheckingVersion() const { return VersionProcess.IsValid(); }
  static bool IsSafeToApply();
+ /**
+  * Broadcast when a generation is accepted ( never for a replayed or older event ), after its
+  * retired assets are cleaned up and while it is still safe to import. Static so editor modules
+  * can subscribe before the subsystem exists.
+  */
+ static FOnProsettaGenerationAccepted OnGenerationAccepted;
  /** Validates watch options as the CLI does, building its argument list. Returns false with OutError on a usage error. */
  static bool BuildWatchArguments(const FString& ConfigFile, const FString& Channel, const FString& Volumes, bool bMirror, FString& OutArguments, FString& OutError);
  /** Parses `prosetta-sync --version` output ( e.g. "0.10.0" or "0.10.0+abc" ) and checks it is at least 0.10.0, the first release with watch. */
@@ -54,7 +74,8 @@ public:
  float VersionCheckTimeoutSeconds = 30.0f;
 private:
  bool Tick(float DeltaTime);
- bool ApplyGeneration(const FString& EventJSON, FString& OutError);
+ /** OutAccepted is the registry of a newly accepted generation; null for a replay, an older revision or a failure. */
+ bool ApplyGeneration(const FString& EventJSON, FString& OutError, UProsettaGenerationAsset*& OutAccepted);
  void ConsumeOutput(bool bFlush);
  void PollVersionCheck();
  void CancelVersionCheck();
@@ -65,6 +86,8 @@ private:
  void* WritePipe = nullptr;
  FString Buffer;
  FString Decoder;
+ /** Set by ConfigureExternalWatch, cleared by StartWatch; fills Decoder whenever it is missing. */
+ FProsettaDecoderResolver DecoderResolver;
  /** `--version` check started by StartWatch, and the watch it launches once the check passes. */
  FProcHandle VersionProcess;
  void* VersionReadPipe = nullptr;
