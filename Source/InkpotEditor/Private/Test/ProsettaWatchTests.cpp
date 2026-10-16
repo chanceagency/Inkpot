@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "HAL/FileManager.h"
 #include "Serialization/JsonSerializer.h"
 #include "UObject/SavePackage.h"
@@ -65,7 +66,7 @@ namespace
   FString Event;
   FString Namespace;
  };
- FFixture Generation(const FString& Scope, const FString& Revision, const FString& Channel, bool Audio = true, bool Corrupt = false)
+ FFixture Generation(const FString& Scope, const FString& Revision, const FString& Channel, bool Audio = true, bool Corrupt = false, const FString& AudioPath = TEXT("audio/take1.wav"))
  {
   FFixture result;
   const FString id = SHAString(Scope + Revision + Channel);
@@ -107,7 +108,7 @@ namespace
    append(8000, 4); append(16000, 4); append(2, 2); append(16, 2); tag("data"); append(1600, 4);
    wav.AddZeroed(1600);
    wav[44] = static_cast<uint8>(FCString::Atoi(*Revision));
-   add(TEXT("audio-file:take1"), TEXT("audio/take1.wav"), wav, TEXT("binary"));
+   add(TEXT("audio-file:take1"), AudioPath, wav, TEXT("binary"));
   }
   auto provenance = MakeShared<FJsonObject>();
   provenance->SetStringField(TEXT("id"), id);
@@ -239,6 +240,9 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
  FFixtureCleanup cleanup;
  UProsettaWatchSubsystem* watch = NewObject<UProsettaWatchSubsystem>();
+ TArray<FString> accepted;
+ const FDelegateHandle acceptedHandle = UProsettaWatchSubsystem::OnGenerationAccepted.AddLambda([&accepted](const UProsettaGenerationAsset& generation) { accepted.Add(generation.GenerationId); });
+ ON_SCOPE_EXIT { UProsettaWatchSubsystem::OnGenerationAccepted.Remove(acceptedHandle); };
  const FFixture first = Generation(scope, TEXT("1"), TEXT("live"));
  const FFixture second = Generation(scope, TEXT("2"), TEXT("live"));
  cleanup.Track(first);
@@ -255,6 +259,12 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  TestTrue(TEXT("one latest generation applied after Play"), watch->TryApplyPending());
  UProsettaGenerationAsset* state = State(second);
  if (!TestNotNull(TEXT("stable ownership registry created"), state)) return false;
+ TestEqual(TEXT("acceptance announced once, for the latest generation"), accepted, TArray<FString>{ state->GenerationId });
+ watch->ConsumeEvent(second.Event);
+ TestTrue(TEXT("replayed event applies as a no-op"), watch->TryApplyPending());
+ watch->ConsumeEvent(first.Event);
+ TestTrue(TEXT("older revision applies as a no-op"), watch->TryApplyPending());
+ TestEqual(TEXT("replay and older revision are not announced"), accepted.Num(), 1);
  UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
  UProsettaSyncedArtifact* localized = Cast<UProsettaSyncedArtifact>(state->Assets.FindRef(TEXT("localization")));
  UProsettaSyncedArtifact* audio = Cast<UProsettaSyncedArtifact>(state->Assets.FindRef(TEXT("audio-file:take1")));
@@ -280,6 +290,7 @@ bool FProsettaWatchTest::RunTest(const FString& InParameters)
  cleanup.Track(corrupt);
  watch->ConsumeEvent(corrupt.Event);
  TestFalse(TEXT("corrupt complete generation fails"), watch->TryApplyPending());
+ TestEqual(TEXT("failed generation is not announced"), accepted.Num(), 2);
  TestTrue(TEXT("previous story retained"), story->GetCompiledJSON().Contains(TEXT("Generation 3")));
  TestTrue(TEXT("previous localization retained"), localized->Text.Contains(TEXT("Bonjour 3")));
  TestTrue(TEXT("error visible"), watch->GetStatus().Contains(TEXT("checksum")));
@@ -409,6 +420,39 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
   TestNotNull(TEXT("saved referenced retired asset loads"), retired);
   TestEqual(TEXT("saved user reference matches retained identity"), reloadedUser->Assets.FindRef(TEXT("UserReference")).Get(), retired);
  }
+ return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchExternalDecoderTest, "Inkpot.Prosetta.WatchExternalDecoder",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchExternalDecoderTest::RunTest(const FString& InParameters)
+{
+ const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ UProsettaWatchSubsystem* watch = NewObject<UProsettaWatchSubsystem>();
+ int32 resolves = 0;
+ watch->ConfigureExternalWatch([&resolves](FString& OutExecutable, FString& OutError) { ++resolves; OutError = TEXT("no decoder in this test"); return false; });
+ TestTrue(TEXT("external watch reports it is connected"), watch->GetStatus().Contains(TEXT("External CLI watch")));
+ const FFixture wav = Generation(scope, TEXT("1"), TEXT("live"));
+ cleanup.Track(wav);
+ watch->ConsumeEvent(wav.Event);
+ TestTrue(TEXT("WAV-only generation applies"), watch->TryApplyPending());
+ TestEqual(TEXT("WAV-only generation never resolves a decoder"), resolves, 0);
+ const FFixture compressed = Generation(scope, TEXT("2"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ cleanup.Track(compressed);
+ watch->ConsumeEvent(compressed.Event);
+ TestFalse(TEXT("compressed audio without a decoder fails"), watch->TryApplyPending());
+ TestEqual(TEXT("compressed audio resolves the decoder on demand"), resolves, 1);
+ TestTrue(TEXT("resolver error is surfaced"), watch->GetStatus().Contains(TEXT("no decoder in this test")));
+ UProsettaGenerationAsset* state = State(wav);
+ if (TestNotNull(TEXT("previous generation retained"), state))
+ {
+  UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
+  TestTrue(TEXT("previous story retained"), story && story->GetCompiledJSON().Contains(TEXT("Generation 1")));
+ }
+ watch->ConsumeEvent(compressed.Event);
+ TestFalse(TEXT("retried generation still fails"), watch->TryApplyPending());
+ TestEqual(TEXT("a failed resolution is retried by the next generation"), resolves, 2);
  return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchCLITest, "Inkpot.Prosetta.WatchCLI",

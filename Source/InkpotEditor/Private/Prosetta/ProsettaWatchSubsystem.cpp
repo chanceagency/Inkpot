@@ -183,6 +183,7 @@ void UProsettaWatchSubsystem::CancelVersionCheck()
 void UProsettaWatchSubsystem::LaunchWatch(const FString& Version)
 {
  Decoder = LaunchDecoder;
+ DecoderResolver = nullptr;
  FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
  Process = FPlatformProcess::CreateProc(*LaunchExecutable, *LaunchArguments, false, true, true, nullptr, 0, nullptr, WritePipe);
  if (!Process.IsValid()) { StopWatch(); Status = TEXT("Unable to launch CLI watch."); return; }
@@ -302,6 +303,14 @@ bool UProsettaWatchSubsystem::IsSafeToApply()
 {
  return IsInGameThread() && GEditor && !GEditor->GetPlaySessionRequest().IsSet() && !GEditor->IsSettingUpPlayWorld() && !GEditor->PlayWorld && !GEditor->bIsSimulatingInEditor && !UE::IsSavingPackage() && !IsAsyncLoading() && !IsGarbageCollecting() && !GEditor->IsTransactionActive();
 }
+void UProsettaWatchSubsystem::ConfigureExternalWatch(FProsettaDecoderResolver ResolveDecoder)
+{
+ StopWatch();
+ Decoder.Empty();
+ DecoderResolver = MoveTemp(ResolveDecoder);
+ Status = TEXT("External CLI watch connected; waiting for a completed generation.");
+}
+
 bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
 {
  TSharedPtr<FJsonObject> event;
@@ -341,6 +350,7 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
  Status = TEXT("Generation queued until Play stops and editor is idle.");
  return true;
 }
+FOnProsettaGenerationAccepted UProsettaWatchSubsystem::OnGenerationAccepted;
 bool UProsettaWatchSubsystem::TryApplyPending()
 {
  if (Pending.IsEmpty() || !IsSafeToApply()) return false;
@@ -465,7 +475,12 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
    FString wav = candidate.Path;
    if (!relative.EndsWith(TEXT(".wav"), ESearchCase::IgnoreCase))
    {
-    if (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)) { OutError = TEXT("Compressed audio needs an absolute FFmpeg executable configured in StartWatch."); return false; }
+    if (Decoder.IsEmpty() && DecoderResolver)
+    {
+     FString resolveError;
+     if (!DecoderResolver(Decoder, resolveError)) { Decoder.Empty(); OutError = TEXT("Audio decoder unavailable: ") + resolveError.Left(512); return false; }
+    }
+    if (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)) { OutError = TEXT("Compressed audio needs an absolute FFmpeg executable ( StartWatch's AudioDecoder or ConfigureExternalWatch's resolver )."); return false; }
     const FString stage = FPaths::ProjectSavedDir() / TEXT("ProsettaAudioStage");
     IFileManager::Get().MakeDirectory(*stage, true);
     wav = stage / (candidate.Checksum + TEXT(".wav"));
@@ -627,6 +642,7 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  // Obsolete assets leave the active registry immediately. Referenced objects remain
  // in an editor-only retirement map, preserving user references until explicit cleanup.
  NativeGenerationPaths.Add(name, root);
+ OnGenerationAccepted.Broadcast(*state);
  return true;
 }
 
