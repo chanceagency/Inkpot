@@ -54,7 +54,8 @@ public class InkpotEditor : ModuleRules
                 "GameplayTags",
 
 				"EditorScriptingUtilities",
-				"MessageLog"
+				"MessageLog",
+				"DirectoryWatcher"
             }
         );
 		

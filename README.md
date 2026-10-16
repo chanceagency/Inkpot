@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.46.24** of the plugin.</br>
+This is version **1.47.24** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta line tags
@@ -39,6 +39,9 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.47.24)
+`FProsettaReceiptWatch` (InkpotEditor) is a directory transport for completions produced outside the editor, for example by a terminal wrapper around `prosetta-sync watch`: each `*.json` file in a watched directory is a schemaVersion 1 `generation-completed` event, written under a temporary name and renamed into place, one file per project, scope and channel. Unreal's DirectoryWatcher only raises a flag; receipts are read on the core ticker and handed to `ConsumeEvent` on the game thread, once per content, with `ConfigureExternalWatch` and the project's decoder resolver applied on the first hand-off. Receipts already present when the watch is created are handed off once, a rejected receipt is offered again on the next change, and in-flight temporary files, other event types and malformed JSON are ignored. `Connect()` takes the transport back from a plugin-owned CLI watch when the project starts its own producer. Covered by `Inkpot.Prosetta.WatchReceipts` and `Inkpot.Prosetta.WatchReceiptTransport`.<br>
 
 ### Prosetta-specific changes (1.46.24)
 `UProsettaWatchSubsystem::ConfigureExternalWatch(ResolveDecoder)` hands the watch transport to a process the project owns (for example a terminal wrapper whose completion receipts reach `ConsumeEvent`), stopping any plugin-owned CLI while keeping the same verified, deferred importer. The resolver locates an FFmpeg executable only when a generation first carries compressed audio, so WAV-only projects never look for one; the resolver runs synchronously on the game thread, so it returns an existing absolute path without blocking. A failed resolution, a relative or missing result, or a resolved decoder that later disappears keeps the previous generation, reports the reason and is retried by the next generation. `ConsumeEvent` must be called on the game thread; `StartWatch` takes the transport back. Covered by `Inkpot.Prosetta.WatchExternalDecoder`.<br>
@@ -445,6 +448,32 @@ locate or download FFmpeg ahead of time rather than inside it. Bind
 `UProsettaWatchSubsystem::OnGenerationAccepted` to refresh project assets
 derived from a generation; it fires once per newly accepted generation, never
 for a replay or an older revision.
+
+When the producer runs in its own process, an editor module can hand completions
+over through a directory instead of a pipe: construct an `FProsettaReceiptWatch`
+on the game thread with the directory and the decoder resolver, keep it for the
+module's lifetime, and destroy it in `ShutdownModule`. Skip it in commandlets and
+unattended runs, which must not replay receipts.
+
+```cpp
+Receipts = MakeUnique<FProsettaReceiptWatch>(FPaths::ProjectSavedDir() / TEXT("MyWatch"),
+ [](FString& OutExecutable, FString& OutError) { /* return an existing absolute FFmpeg path */ return false; });
+```
+
+The receipt protocol, for producers in any language:
+
+- A receipt is one `prosetta-sync watch` NDJSON `generation-completed` event
+  ( `schemaVersion` 1 ) stored as a single UTF-8 JSON object in a `*.json` file
+  directly in the watched directory. Other event types and other schema versions
+  are ignored, and the importer validates the event as if it came from the CLI.
+  Copy only the event's own fields, never credentials or CLI configuration.
+- Write a temporary name that does not end in `.json` in the same directory, then
+  rename it over the receipt, so the editor never reads a partial file.
+- Keep one receipt per project, scope and channel and overwrite it with each newer
+  completion; the importer keeps only the newest revision per namespace anyway.
+- Leave receipts in place. The editor compares content, so an unchanged receipt
+  is never imported twice in a session, and replays across restarts are rejected
+  by the importer's revision checks.
 
 The subsystem also exposes these commands to editor Blueprints and C++ through
 `UProsettaWatchSubsystem`. Shipping player builds contain cooked content only;
