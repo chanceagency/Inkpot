@@ -35,3 +35,11 @@ The authenticated Prosetta stream was not contacted; a human should still run `P
 - `WatchCLI` covers `SelectDiagnostic`: an error block keeps its first line, while stack frames, `--- End of` markers and indented continuations are skipped.
 - `LocalizedLanguageCodes` covers `UProsettaLine::GetLocalizedText`: language codes match regardless of case and separator, a regional code falls back through its parent codes (`zh-hant-tw` to `zh-hant` to `zh`), a base code never guesses between regions, and inline expressions render through a normalised match.
 - `InlineTemplate.RenderOnly` checks that `EUsage::RenderOnly` builds no alignment, renders the same output as an aligned template, still recovers values through `ExtractValues`, and still resolves nested values.
+
+## Inkpot 1.48.24 (Prosetta Dashboard in the plugin): October 17, 2026
+
+The plugin was copied, without `Binaries`, `Intermediate` or `Saved`, into `Plugins/Inkpot` of a new, empty UE 5.8 C++ project. That project has one runtime module (`NewProject`), and its `.uproject` adds only the `Inkpot` plugin entry. `NewProjectEditor` built with `Engine/Build/BatchFiles/Mac/Build.sh` (Xcode 27.0, `-DisableAdaptiveUnity`, so every module compiled as a unity build) with no warnings.
+
+`UnrealEditor-Cmd NewProject.uproject -ExecCmds="Automation RunTests Inkpot.Prosetta" -unattended -nullrhi` passed 67 of 67 tests with no warnings, and `Automation RunTests Inkpot` passed 248 of 248. The new tests are `Inkpot.Prosetta.Dashboard.Model.WrapperMissingIsFirstRun` (missing wrapper → first-run checklist naming the paths it searched), `Dashboard.Scripts.ShippedWithPlugin` (`prosetta.py`, `ffmpeg.py` and the lock file are found in `Plugins/Inkpot/Scripts` when the project has no `Scripts` folder), `Dashboard.RePoint.StorySourceHost` (re-point spawns and reuses `AProsettaStorySourceActor` through `IProsettaStorySourceHost` and clears the tag for `latest`), and `Inkpot.Prosetta.StorySource.ForWorldFromHost`. `python3 -m unittest tests.test_tools` in `Scripts` passed 46 tests and skipped 1 (Windows only).
+
+Not verified: the dashboard against a real Prosetta project, Windows, and UE 5.7.
