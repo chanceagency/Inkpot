@@ -71,7 +71,12 @@ struct PROSETTADASHBOARD_API FProsettaSyncProfile
 	UPROPERTY(EditAnywhere, Category="Watch", meta=(EditCondition="Mode == EProsettaSyncMode::Watch", EditConditionHides))
 	EProsettaWatchChannel Channel = EProsettaWatchChannel::Live;
 
-	/** Sync scope. Empty syncs the live project (canonical story). */
+	/**
+	 * Sync scope. Empty syncs the whole live project (canonical story): the dashboard clears the CLI's local `volumes`
+	 * config (`config clear volumes`) before Sync and before starting the watch, so a scope left by an earlier volume
+	 * switch is not followed. An empty scope is not the same as ticking the default volume, which is an explicit scope
+	 * with its own cache and manifest scope marker.
+	 */
 	UPROPERTY(EditAnywhere, Category="Scope", meta=(EditCondition="Mode != EProsettaSyncMode::Verify", EditConditionHides))
 	TArray<FProsettaVolumeScope> Volumes;
 

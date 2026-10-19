@@ -655,6 +655,23 @@ void FProsettaDashboardModel::StartWatch()
 		return;
 	}
 	if (!Deps.StartWatch) { Fail(TEXT("No editor watch is installed (unattended editor?)."), EProsettaChangeKind::Info); return; }
+	if (Deps.Runner && State.Profile.ScopeString().IsEmpty() && !State.Credentials.ConfigVolumes.IsEmpty())
+	{
+		// The watch passes --volumes only when non-empty, so an empty scope would silently follow a stale config scope
+		// (e.g. left by a volume switch). Clear it first, then start.
+		if (State.IsBusy()) { Fail(FString::Printf(TEXT("Watch not started: the dashboard is busy (%s); try again."), *State.Busy), EProsettaChangeKind::Info); return; }
+		TWeakPtr<FProsettaDashboardModel> Weak = AsShared();
+		SetBusy(TEXT("Clearing the stale sync scope"));
+		ApplyConfigScope(FString(), [Weak](const FString& Error)
+		{
+			TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
+			if (!Self) { return; }
+			Self->ClearBusy();
+			if (!Error.IsEmpty()) { Self->Fail(TEXT("Watch not started: ") + Error); return; }
+			Self->StartWatch();
+		});
+		return;
+	}
 	if (Deps.IsWatchRunning ? Deps.IsWatchRunning() : State.bWatchRunning)
 	{
 		// The editor watch ignores Start while running and refuses it while the old CLI is stopping: stop now, start from Poll.
@@ -786,21 +803,38 @@ void FProsettaDashboardModel::SyncOnce()
 			Inner->ClearBusy();
 		}));
 	};
-	// `sync` reads its scope from the local config: write the profile's volumes there first (empty follows the config, like the watch).
+	// `sync` reads its scope from the local config: write the profile's volumes there first. An empty scope means the whole
+	// live project, so it clears a stale config scope (e.g. left by a volume switch) instead of following it.
 	const FString Scope = State.Profile.ScopeString();
-	if (Scope.IsEmpty() || Scope == State.Credentials.ConfigVolumes) { RunSync(); return; }
-	Deps.Runner->ConfigSetVolumes(Scope, FProsettaCliCompleted::CreateLambda([Weak, Scope, RunSync](const FProsettaCliResult& Result)
+	if (Scope == State.Credentials.ConfigVolumes) { RunSync(); return; }
+	ApplyConfigScope(Scope, [Weak, RunSync](const FString& Error)
+	{
+		TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
+		if (!Self) { return; }
+		if (!Error.IsEmpty())
+		{
+			Self->Fail(TEXT("Sync not started: ") + Error);
+			Self->ClearBusy();
+			return;
+		}
+		RunSync();
+	});
+}
+
+void FProsettaDashboardModel::ApplyConfigScope(const FString& Scope, TFunction<void(const FString& Error)> Done)
+{
+	TWeakPtr<FProsettaDashboardModel> Weak = AsShared();
+	Deps.Runner->ConfigSetVolumes(Scope, FProsettaCliCompleted::CreateLambda([Weak, Scope, Done = MoveTemp(Done)](const FProsettaCliResult& Result)
 	{
 		TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
 		if (!Self) { return; }
 		if (!Result.Succeeded())
 		{
-			Self->Fail(TEXT("Sync not started: could not write the sync scope to local config: ") + Result.UserError);
-			Self->ClearBusy();
+			Done(TEXT("could not write the sync scope to local config: ") + Result.UserError);
 			return;
 		}
 		Self->State.Credentials.ConfigVolumes = Scope;
-		RunSync();
+		Done(FString());
 	}));
 }
 
