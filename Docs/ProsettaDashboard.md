@@ -152,13 +152,22 @@ public:
 The project's editor module can depend on `ProsettaDashboard`:
 
 - `FProsettaDashboardModule::Get().SetPresentationImporter(...)` installs an
-  importer for voice and portrait presentation assets. **Rebuild** calls it
-  when the profile has **Import On Accept** on. Packages it writes as
-  `<StoryAsset>_Presentation` or under `<folder>/ProsettaMedia/` are saved with
-  the story. Without an importer, Rebuild builds the story only.
+  importer for voice and portrait presentation assets. The dashboard owns the
+  trigger and runs it exactly once per rebuilt generation, when the profile has
+  **Import On Accept** on: on every accepted watch generation (the reload waits
+  for Play to stop and for a safe editor state), and on **Rebuild**, **Sync** and
+  a volume switch. Reloads that are queued together (several generations
+  accepted before a safe moment, or Rebuild pressed meanwhile) coalesce into one
+  rebuild and one import, which reads the mirror's current generation. A failed
+  import fails that rebuild and is reported in the change list. Packages it
+  writes as `<StoryAsset>_Presentation` or under `<folder>/ProsettaMedia/` are
+  saved with the story. Without an importer, or with **Import On Accept** off,
+  reloads build the story only. Headless runs (commandlets) never start the
+  dashboard subsystem. A project module must therefore not also import
+  presentation from `UProsettaWatchSubsystem::OnGenerationAccepted`; register the
+  importer and let the dashboard drive it.
 - `LoadActiveProfile()`, `WatchOptionsFromProfile()` and `GetProjectWatch()`
-  expose the active profile and the editor-owned watch, for example to refresh
-  presentation from `UProsettaWatchSubsystem::OnGenerationAccepted`.
+  expose the active profile and the editor-owned watch.
 
 ## Scripts
 
