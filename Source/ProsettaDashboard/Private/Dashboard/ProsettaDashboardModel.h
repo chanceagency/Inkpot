@@ -67,6 +67,8 @@ struct PROSETTADASHBOARD_API FProsettaCredentialsSummary
 	FString ConfigVolumes;
 	bool bCliAvailable = false;
 	FString CliCommand;
+	/** Per-file notices from the wrapper's report, e.g. a token file readable by other users. */
+	TArray<FString> Warnings;
 	bool HasCredentials() const { return Source != TEXT("none") && !Source.IsEmpty(); }
 	/** "Connected as <owner> to <project> (<baseUrl>) via <source>". */
 	FString Describe() const;

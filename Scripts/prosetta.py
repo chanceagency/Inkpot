@@ -146,13 +146,21 @@ def introspect(settings, token):
 
 
 def native_config_paths():
+    """Where the Prosetta Sync CLI keeps its own user config (the only layer the CLI defines).
+
+    Mirrors Prosetta.SyncTool ConfigService.ResolveConfigPath, which is
+    Environment.SpecialFolder.ApplicationData / Prosetta / SyncTool / config.json:
+    ~/Library/Application Support on macOS (confirmed against CLI 0.11.0, which ignores a $HOME override
+    there), %APPDATA% (Roaming) on Windows, $XDG_CONFIG_HOME or ~/.config on Linux. The CLI never reads
+    or writes %LOCALAPPDATA% for config, so it is not a candidate. The CLI has no offline command that
+    reports this, so the wrapper has to know the path; keep it in step with ConfigService.
+    """
     if sys.platform == 'darwin':
         return [Path.home() / 'Library/Application Support/Prosetta/SyncTool/config.json']
     if sys.platform == 'win32':
-        # CLI uses .NET ApplicationData (Roaming); accept LocalAppData installs too.
-        return [Path(os.environ.get(name, Path.home() / 'AppData' / suffix)) / 'Prosetta/SyncTool/config.json'
-                for name, suffix in [('APPDATA', 'Roaming'), ('LOCALAPPDATA', 'Local')]]
-    return [Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'Prosetta/SyncTool/config.json']
+        return [Path(os.environ.get('APPDATA') or Path.home() / 'AppData' / 'Roaming') / 'Prosetta/SyncTool/config.json']
+    # An empty XDG_CONFIG_HOME means unset, as it does for .NET.
+    return [Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'Prosetta/SyncTool/config.json']
 
 
 def fallback_config():
