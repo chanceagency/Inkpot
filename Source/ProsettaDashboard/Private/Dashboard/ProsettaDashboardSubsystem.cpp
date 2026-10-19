@@ -170,10 +170,10 @@ bool UProsettaDashboardSubsystem::Tick(float)
 		Info.SubText = LOCTEXT("ExternalChangeSub", "Apply rebuilds the story asset from the mirror once Play is stopped.");
 		Info.ExpireDuration = 8.0f;
 		Info.bFireAndForget = false;
-		TSharedPtr<SNotificationItem> Item;
 		TWeakPtr<FProsettaDashboardModel> Weak = Model;
-		auto Finish = [](TSharedPtr<SNotificationItem> I) { if (I) { I->SetCompletionState(SNotificationItem::CS_None); I->ExpireAndFadeout(); } };
-		TSharedPtr<TSharedPtr<SNotificationItem>> ItemBox = MakeShared<TSharedPtr<SNotificationItem>>();
+		auto Finish = [](const TWeakPtr<SNotificationItem>& Weak) { if (TSharedPtr<SNotificationItem> I = Weak.Pin()) { I->SetCompletionState(SNotificationItem::CS_None); I->ExpireAndFadeout(); } };
+		// Weak: the item owns these buttons, so a strong capture would be a cycle that leaks the toast.
+		TSharedRef<TWeakPtr<SNotificationItem>> ItemBox = MakeShared<TWeakPtr<SNotificationItem>>();
 		Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("Apply", "Apply"), LOCTEXT("ApplyTip", "Rebuild the story asset from the changed mirror."), FSimpleDelegate::CreateLambda([Weak, ItemBox, Finish]
 		{
 			if (TSharedPtr<FProsettaDashboardModel> M = Weak.Pin()) { M->ApplyPending(); }
@@ -184,8 +184,9 @@ bool UProsettaDashboardSubsystem::Tick(float)
 			if (TSharedPtr<FProsettaDashboardModel> M = Weak.Pin()) { M->DismissExternalChange(); }
 			Finish(*ItemBox);
 		})));
-		*ItemBox = FSlateNotificationManager::Get().AddNotification(Info);
-		if (*ItemBox) { (*ItemBox)->SetCompletionState(SNotificationItem::CS_Pending); }
+		const TSharedPtr<SNotificationItem> Added = FSlateNotificationManager::Get().AddNotification(Info);
+		*ItemBox = Added;
+		if (Added) { Added->SetCompletionState(SNotificationItem::CS_Pending); }
 	}
 	if (!DirectoryWatchHandle.IsValid()) { EnsureManifestWatcher(); }
 	Model->Poll(BuildPollInput());

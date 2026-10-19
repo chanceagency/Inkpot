@@ -490,7 +490,8 @@ def run_cli(args, on_lines=None):
             if args[0] != 'config':
                 updated['token'] = credential_env.get('PROSETTA_PROJECT_TOKEN') if args[0] == 'init' and credential_env.get('PROSETTA_PROJECT_TOKEN') else local.get('token')  # Never persist an env/home credential.
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            with local_path.open('w', encoding='utf-8') as output:
+            # Created 0600 so the token is never readable by others, even briefly (umask would give 0644).
+            with os.fdopen(os.open(local_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w', encoding='utf-8') as output:
                 json.dump(updated, output, indent=2)
                 output.write('\n')
             local_path.chmod(0o600)

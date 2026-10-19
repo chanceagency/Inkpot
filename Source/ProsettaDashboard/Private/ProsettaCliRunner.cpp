@@ -211,7 +211,14 @@ void FProsettaCliRunner::ConsumeLine(FActive& Run, const FString& RawLine)
 		}
 	}
 	const FString Redacted = UProsettaSyncInspector::RedactCredentialLine(Line);
-	if (IsNoticeLine(Line)) { Run.Result.Notices.Add(Redacted); }
+	if (IsNoticeLine(Line))
+	{
+		Run.Result.Notices.Add(Redacted);
+		for (const TCHAR* Mark : { TEXT("INVALID_OR_EXPIRED_TOKEN"), TEXT("rejected the token"), TEXT("different project"), TEXT("HTTP 401"), TEXT("HTTP 403"), TEXT("No usable token") })
+		{
+			if (Line.Contains(Mark, ESearchCase::IgnoreCase)) { Run.Result.bCredentialRejection = true; }
+		}
+	}
 	if (Run.Pending.Request.bCaptureText) { Run.Result.TextLines.Add(Redacted); }
 }
 

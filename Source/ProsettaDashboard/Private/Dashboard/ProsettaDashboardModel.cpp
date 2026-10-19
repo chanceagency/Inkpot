@@ -56,6 +56,7 @@ namespace
 	/** True when the wrapper or Prosetta judged the token itself (rejected, expired, other project, missing). */
 	bool IsCredentialRejection(const FProsettaCliResult& Result)
 	{
+		if (Result.bCredentialRejection) { return true; }
 		FString Text = Result.UserError;
 		for (const FString& Notice : Result.Notices) { Text += TEXT("\n") + Notice; }
 		for (const TCHAR* Mark : { TEXT("INVALID_OR_EXPIRED_TOKEN"), TEXT("rejected the token"), TEXT("different project"), TEXT("HTTP 401"), TEXT("HTTP 403"), TEXT("No usable token") })
@@ -668,6 +669,17 @@ void FProsettaDashboardModel::StartWatch()
 	}
 	bWatchRestartPending = false;
 	Deps.StartWatch(State.Profile);
+	if (Deps.IsWatchRunning && !Deps.IsWatchRunning())
+	{
+		// Start refused (the previous CLI is still stopping, or the script or Python is missing): retry from Poll rather than claim it started.
+		QueueWatchRestart();
+		FProsettaChangeEntry Pending;
+		Pending.Time = FDateTime::UtcNow();
+		Pending.Message = TEXT("Watch is waiting for the previous CLI to stop.");
+		AddChange(MoveTemp(Pending));
+		Broadcast();
+		return;
+	}
 	FProsettaChangeEntry Entry;
 	Entry.Time = FDateTime::UtcNow();
 	Entry.Message = FString::Printf(TEXT("Watch started (%s, scope %s)."), *State.Profile.ChannelName(), State.Profile.ScopeString().IsEmpty() ? TEXT("project") : *State.Profile.ScopeString());

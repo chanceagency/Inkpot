@@ -34,6 +34,8 @@ struct FProsettaCliResult
 	TArray<FString> JsonLines;
 	/** Whitelisted, redacted wrapper/CLI diagnostics (usage errors, wrapper failures). */
 	TArray<FString> Notices;
+	/** A notice said the token itself was judged (rejected, expired, other project, missing). Set before redaction, which would hide the wording. */
+	bool bCredentialRejection = false;
 	/** Redacted plain stdout when bCaptureText was set. */
 	TArray<FString> TextLines;
 	/** What to tell the user when the run did not succeed. */
