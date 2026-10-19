@@ -84,6 +84,11 @@ Until there is a wrapper, a CLI and credentials, the tab shows a checklist:
   channel, volumes with an optional `@tag`, no-mirror, repair, snapshot, audio
   decoder, CLI override, auto-start, import on accept). **Run** starts or
   restarts the watch, syncs once, or verifies.
+  An empty volume list means the whole live project: **Run** clears the CLI's
+  local `volumes` config first if an earlier volume switch left a scope there
+  (a watch started at editor launch skips this and follows the local config).
+  It does not select the default volume, which would be an explicit scope with
+  its own cache.
 - **Volumes**: the project's volumes from `volumes --json`. **Use** switches
   the mirror to a volume and can re-point the open level (see below).
 - **Recent changes**: generations, syncs, verifies, errors and blocks, seeded
