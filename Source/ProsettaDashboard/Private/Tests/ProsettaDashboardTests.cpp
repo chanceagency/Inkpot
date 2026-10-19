@@ -593,6 +593,9 @@ bool FProsettaDashboardRePointTest::RunTest(const FString&)
 	};
 	// RePointWorld's transactions join this one, which is cancelled so the editor's undo buffer keeps nothing from this throwaway world.
 	FScopedTransaction Scratch(NSLOCTEXT("ProsettaDashboardTests", "RePointScratch", "Prosetta re-point test"));
+	// Projects may name their own host class (Project Settings > Prosetta Sync); this test covers the plugin default.
+	UProsettaSyncProjectSettings* Settings = GetMutableDefault<UProsettaSyncProjectSettings>();
+	TGuardValue<TSoftClassPtr<AActor>> HostClassGuard(Settings->StorySourceHostClass, TSoftClassPtr<AActor>());
 	FString Error;
 	TestTrue(TEXT("default host class"), UProsettaDashboardSubsystem::StorySourceHostClass() == AProsettaStorySourceActor::StaticClass());
 	TestNull(TEXT("no host yet"), ProsettaStorySource::FindHost(World));
