@@ -1,11 +1,10 @@
 // Prosetta Dashboard editor tests. Everything here runs offline: the model gets no CLI runner,
-// widgets get a fake model, and the credential scan is pointed at a transient directory.
+// and widgets get a fake model.
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "ProsettaSyncProfile.h"
 #include "ProsettaProfileStore.h"
 #include "ProsettaDashboardSettings.h"
-#include "ProsettaCredentialScan.h"
 #include "ProsettaCliRunner.h"
 #include "ProsettaPython.h"
 #include "ProsettaStoryAssetBuild.h"
@@ -37,9 +36,6 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/Layout/SBox.h"
 #include "Styling/StyleColors.h"
-#if PLATFORM_MAC || PLATFORM_LINUX
-#include <sys/stat.h>
-#endif
 
 #define DASHBOARD_TEST(Class, Name) IMPLEMENT_SIMPLE_AUTOMATION_TEST(Class, "Inkpot.Prosetta.Dashboard." Name, EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -434,67 +430,6 @@ bool FProsettaDashboardRecentConnectionsTest::RunTest(const FString&)
 	return true;
 }
 
-// ------------------------------------------------------------------ credential scan
-
-DASHBOARD_TEST(FProsettaDashboardCredentialScanTest, "CredentialScan.SourceOrder")
-bool FProsettaDashboardCredentialScanTest::RunTest(const FString&)
-{
-	const FString Root = TransientDir(TEXT("CredentialScan"));
-	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*Root, false, true); };
-	const FString ProjectDir = Root / TEXT("Project");
-	const FString HomeDir = Root / TEXT("Home");
-	TMap<FString, FString> Env;
-
-	FProsettaCredentialScan Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("nothing -> none"), Scan.Source, FString(TEXT("none")));
-	TestFalse(TEXT("HasAny false"), Scan.HasAny());
-	TestEqual(TEXT("five candidates"), Scan.Candidates.Num(), 5);
-	TestEqual(TEXT("env first"), Scan.Candidates[0].Kind, FString(TEXT("env")));
-	TestEqual(TEXT("native last"), Scan.Candidates.Last().Kind, FString(TEXT("native")));
-	TestTrue(TEXT("native under ~/.config"), Scan.Candidates.Last().Path.Contains(TEXT(".config")));
-
-	// Native config via XDG_CONFIG_HOME.
-	const FString Xdg = Root / TEXT("xdg");
-	Env.Add(TEXT("XDG_CONFIG_HOME"), Xdg);
-	FFileHelper::SaveStringToFile(TEXT("{}"), *(Xdg / TEXT("Prosetta") / TEXT("SyncTool") / TEXT("config.json")));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("native found"), Scan.Source, FString(TEXT("native")));
-
-	FFileHelper::SaveStringToFile(TEXT("{}"), *(HomeDir / TEXT(".prosetta-sync") / TEXT("config.json")));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("home beats native"), Scan.Source, FString(TEXT("home")));
-
-	const FString LocalConfig = ProjectDir / TEXT(".prosetta-sync") / TEXT("config.json");
-	FFileHelper::SaveStringToFile(TEXT("{}"), *LocalConfig);
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("local beats home"), Scan.Source, FString(TEXT("local")));
-
-	Env.Add(TEXT("PROSETTA_PROJECT_TOKEN"), TEXT("placeholder-not-a-real-token"));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("env beats local"), Scan.Source, FString(TEXT("env")));
-	TestFalse(TEXT("describe never echoes the value"), Scan.Describe().Contains(TEXT("placeholder-not-a-real-token")));
-	Env.Add(TEXT("PROSETTA_PROJECT_TOKEN"), TEXT(""));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("empty env ignored"), Scan.Source, FString(TEXT("local")));
-
-#if PLATFORM_MAC || PLATFORM_LINUX
-	chmod(TCHAR_TO_UTF8(*LocalConfig), 0644);
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	const FProsettaCredentialCandidate* Local = Scan.Candidates.FindByPredicate([&](const FProsettaCredentialCandidate& C) { return C.Path == LocalConfig; });
-	TestNotNull(TEXT("local candidate present"), Local);
-	if (Local)
-	{
-		TestTrue(TEXT("0644 is world readable"), Local->bWorldReadable);
-		TestTrue(TEXT("warning suggests chmod"), Local->Warning.Contains(TEXT("chmod")));
-	}
-	chmod(TCHAR_TO_UTF8(*LocalConfig), 0600);
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	Local = Scan.Candidates.FindByPredicate([&](const FProsettaCredentialCandidate& C) { return C.Path == LocalConfig; });
-	TestTrue(TEXT("0600 is private"), Local && !Local->bWorldReadable);
-#endif
-	return true;
-}
-
 // ------------------------------------------------------------------ CLI runner
 
 DASHBOARD_TEST(FProsettaDashboardCliCommandLineTest, "CliRunner.CommandLine")
@@ -544,6 +479,7 @@ namespace
 		bool bPIE = false;
 		bool bSafe = true;
 		int32 Reloads = 0;
+		int32 PresentationReloads = 0;
 		int32 RePoints = 0;
 		int32 Toasts = 0;
 		TArray<FString> ToastTexts;
@@ -557,7 +493,7 @@ namespace
 			Deps.MirrorRoot = Root / TEXT("Mirror");
 			Deps.IsPIE = [this]() { return bPIE; };
 			Deps.SafeToApply = [this]() { return bSafe; };
-			Deps.Reload = [this](const FProsettaSyncProfile&, const FString&, bool, FString&) { ++Reloads; return true; };
+			Deps.Reload = [this](const FProsettaSyncProfile&, const FString&, bool bWithPresentation, FString&) { ++Reloads; if (bWithPresentation) { ++PresentationReloads; } return true; };
 			Deps.RePoint = [this](const FString&, const FString&, FString&) { ++RePoints; return true; };
 			Deps.Toast = [this](const FText& Text, EProsettaToastKind) { ++Toasts; ToastTexts.Add(Text.ToString()); };
 		}
@@ -657,6 +593,9 @@ bool FProsettaDashboardRePointTest::RunTest(const FString&)
 	};
 	// RePointWorld's transactions join this one, which is cancelled so the editor's undo buffer keeps nothing from this throwaway world.
 	FScopedTransaction Scratch(NSLOCTEXT("ProsettaDashboardTests", "RePointScratch", "Prosetta re-point test"));
+	// Projects may name their own host class (Project Settings > Prosetta Sync); this test covers the plugin default.
+	UProsettaSyncProjectSettings* Settings = GetMutableDefault<UProsettaSyncProjectSettings>();
+	TGuardValue<TSoftClassPtr<AActor>> HostClassGuard(Settings->StorySourceHostClass, TSoftClassPtr<AActor>());
 	FString Error;
 	TestTrue(TEXT("default host class"), UProsettaDashboardSubsystem::StorySourceHostClass() == AProsettaStorySourceActor::StaticClass());
 	TestNull(TEXT("no host yet"), ProsettaStorySource::FindHost(World));
@@ -721,6 +660,22 @@ bool FProsettaDashboardModelParseTest::RunTest(const FString&)
 	TestFalse(TEXT("no credentials"), None.HasCredentials());
 	TestFalse(TEXT("cli missing"), None.bCliAvailable);
 	TestFalse(TEXT("null report refused"), FProsettaDashboardModel::ParseCredentialsReport(nullptr, None));
+
+	// The wrapper's report (prosetta.py describe_credentials) is the only credential-source report, and it
+	// carries file facts, never a token. Even a report that wrongly carried one must not reach the summary.
+	FProsettaCredentialsSummary Leaky;
+	TestTrue(TEXT("report with candidates and a stray token parses"), FProsettaDashboardModel::ParseCredentialsReport(ParseJsonObject(
+		TEXT(R"({"schemaVersion":1,"source":"native","token":"must-not-leak","candidates":[{"kind":"native","path":"/n/config.json","exists":true,"hasToken":true,"mode":"600","warning":null}],"cli":{"available":false,"command":"dotnet"}})")), Leaky));
+	TestEqual(TEXT("native source kept"), Leaky.Source, FString(TEXT("native")));
+	TestTrue(TEXT("native counts as credentials"), Leaky.HasCredentials());
+	TestFalse(TEXT("summary never echoes a token"), Leaky.Describe().Contains(TEXT("must-not-leak")));
+	TestEqual(TEXT("no warnings for a 600 file"), Leaky.Warnings.Num(), 0);
+
+	FProsettaCredentialsSummary Loose;
+	TestTrue(TEXT("report with a file warning parses"), FProsettaDashboardModel::ParseCredentialsReport(ParseJsonObject(
+		TEXT(R"({"source":"home","candidates":[{"kind":"home","path":"/h/config.json","exists":true,"hasToken":true,"mode":"644","warning":"Token file is readable by other users (mode 644); run chmod 600 on it."},{"kind":"native","exists":false,"warning":null}],"cli":{"available":true}})")), Loose));
+	TestEqual(TEXT("one warning kept"), Loose.Warnings.Num(), 1);
+	TestTrue(TEXT("warning shown to the user"), Loose.Describe().Contains(TEXT("chmod 600")));
 
 	FString Owner, Project;
 	FProsettaDashboardModel::ParseWhoami(ParseJsonObject(TEXT(R"({"user":{"email":"dev@example.invalid"},"project":{"name":"Sample","identifier":"sample"}})")), Owner, Project);
@@ -801,6 +756,54 @@ bool FProsettaDashboardModelReloadPIETest::RunTest(const FString&)
 	Model->Poll(Input);
 	TestEqual(TEXT("not repeated"), Fixture.Reloads, 1);
 	TestFalse(TEXT("TryRunPendingReload idle"), Model->TryRunPendingReload());
+	return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardModelAcceptedPresentationTest, "Model.AcceptedGenerationImportsPresentationOnce")
+bool FProsettaDashboardModelAcceptedPresentationTest::RunTest(const FString&)
+{
+	FModelFixture Fixture;
+	WriteManifest(Fixture.Deps.MirrorRoot, TEXT("gen-1"));
+	TSharedRef<FProsettaDashboardModel> Model = Fixture.Make();
+
+	// One accepted generation: one reload, and it asks for the presentation import.
+	Model->NoteGenerationAccepted(TEXT("gen-1"), true);
+	TestEqual(TEXT("one reload"), Fixture.Reloads, 1);
+	TestEqual(TEXT("with presentation"), Fixture.PresentationReloads, 1);
+
+	// Import On Accept off: no reload at all.
+	Model->NoteGenerationAccepted(TEXT("gen-2"), false);
+	TestEqual(TEXT("no reload when off"), Fixture.Reloads, 1);
+
+	// Several generations accepted, then Rebuild, while Play defers the reload: still one run, one import.
+	Fixture.bPIE = true;
+	Model->NoteGenerationAccepted(TEXT("gen-3"), true);
+	Model->NoteGenerationAccepted(TEXT("gen-4"), true);
+	Model->ReimportLastGeneration();
+	TestEqual(TEXT("deferred"), Fixture.Reloads, 1);
+	Fixture.bPIE = false;
+	FProsettaDashboardPollInput Input;
+	Input.bSafeToApply = true;
+	Model->Poll(Input);
+	TestEqual(TEXT("coalesced into one reload"), Fixture.Reloads, 2);
+	TestEqual(TEXT("coalesced into one import"), Fixture.PresentationReloads, 2);
+	Model->Poll(Input);
+	TestEqual(TEXT("not repeated"), Fixture.PresentationReloads, 2);
+
+	// A story-only request that queues first must still upgrade to the import when an accept joins it.
+	Fixture.bSafe = false;
+	Model->EnqueueReload(false);
+	Model->NoteGenerationAccepted(TEXT("gen-5"), true);
+	Fixture.bSafe = true;
+	Input.bSafeToApply = true;
+	Model->Poll(Input);
+	TestEqual(TEXT("one reload for the joined request"), Fixture.Reloads, 3);
+	TestEqual(TEXT("joined request imports"), Fixture.PresentationReloads, 3);
+
+	// The flag resets: a later plain reload is story-only.
+	Model->EnqueueReload(false);
+	TestEqual(TEXT("plain reload ran"), Fixture.Reloads, 4);
+	TestEqual(TEXT("plain reload is story-only"), Fixture.PresentationReloads, 3);
 	return true;
 }
 
@@ -914,6 +917,124 @@ bool FProsettaDashboardModelProfilesTest::RunTest(const FString&)
 	TestTrue(TEXT("deleting the active profile recreates the default"), Model->DeleteProfile(TEXT("Default"), Error));
 	TestEqual(TEXT("default recreated"), State.ProfileNames.Num(), 1);
 	TestEqual(TEXT("default active again"), State.Profile.Name, FString(TEXT("Default")));
+	return true;
+}
+
+namespace
+{
+	/** A runner that records the config/sync calls the model makes and completes them synchronously. */
+	class FRecordingRunner final : public FProsettaCliRunner
+	{
+	public:
+		FRecordingRunner() : FProsettaCliRunner(FString(), FString(), FString()) {}
+		TArray<FString> Ops;
+		bool bFailConfig = false;
+
+		virtual int32 ConfigSetVolumes(const FString& Scope, FProsettaCliCompleted OnComplete) override
+		{
+			Ops.Add(Scope.IsEmpty() ? FString(TEXT("config clear")) : FString(TEXT("config set ")) + Scope);
+			FProsettaCliResult Result;
+			Result.bLaunched = true;
+			Result.ExitCode = bFailConfig ? 1 : 0;
+			if (bFailConfig) { Result.UserError = TEXT("config is read-only"); }
+			OnComplete.ExecuteIfBound(Result);
+			return 0;
+		}
+		virtual int32 Sync(const FProsettaSyncProfile&, FProsettaCliCompleted OnComplete, FProsettaCliLine) override
+		{
+			Ops.Add(TEXT("sync"));
+			FProsettaCliResult Result;
+			Result.bLaunched = true;
+			Result.ExitCode = 0;
+			OnComplete.ExecuteIfBound(Result);
+			return 0;
+		}
+	};
+}
+
+DASHBOARD_TEST(FProsettaDashboardModelEmptyScopeSyncTest, "Model.EmptyScopeClearsConfigOnSync")
+bool FProsettaDashboardModelEmptyScopeSyncTest::RunTest(const FString&)
+{
+	FModelFixture Fixture;
+	TSharedRef<FRecordingRunner> Runner = MakeShared<FRecordingRunner>();
+	Fixture.Deps.Runner = Runner;
+	TSharedRef<FProsettaDashboardModel> Model = Fixture.Make();
+	const FProsettaDashboardState& State = Model->GetState();
+
+	FString Error;
+	TestTrue(TEXT("switch to core"), Model->SwitchVolume(TEXT("core"), TEXT(""), false, Error));
+	TestEqual(TEXT("switch wrote the scope then synced"), FString::Join(Runner->Ops, TEXT(";")), FString(TEXT("config set core;sync")));
+	TestEqual(TEXT("profile follows the swap"), State.Profile.ScopeString(), FString(TEXT("core")));
+	Runner->Ops.Reset();
+
+	// Unchanged non-empty scope: no redundant config write.
+	FProsettaSyncProfile Edited = State.Profile;
+	Edited.Mode = EProsettaSyncMode::SyncOnce;
+	Model->SetProfile(Edited);
+	Model->SyncOnce();
+	TestEqual(TEXT("same scope only syncs"), FString::Join(Runner->Ops, TEXT(";")), FString(TEXT("sync")));
+	Runner->Ops.Reset();
+
+	// Untick the volume: the config still says core, so an empty scope must clear it before syncing.
+	Edited.Volumes.Reset();
+	Model->SetProfile(Edited);
+	Model->SyncOnce();
+	TestEqual(TEXT("empty scope clears the config, then syncs"), FString::Join(Runner->Ops, TEXT(";")), FString(TEXT("config clear;sync")));
+	TestTrue(TEXT("config now known empty"), State.Credentials.ConfigVolumes.IsEmpty());
+	Runner->Ops.Reset();
+
+	Model->SyncOnce();
+	TestEqual(TEXT("already clear: only syncs"), FString::Join(Runner->Ops, TEXT(";")), FString(TEXT("sync")));
+	Runner->Ops.Reset();
+
+	// A failed clear must not sync with the stale scope.
+	TestTrue(TEXT("switch back to core"), Model->SwitchVolume(TEXT("core"), TEXT(""), false, Error));
+	Runner->Ops.Reset();
+	Edited = State.Profile;
+	Edited.Volumes.Reset();
+	Model->SetProfile(Edited);
+	Runner->bFailConfig = true;
+	Model->SyncOnce();
+	TestEqual(TEXT("failed clear does not sync"), FString::Join(Runner->Ops, TEXT(";")), FString(TEXT("config clear")));
+	TestTrue(TEXT("error surfaced"), State.LastError.Contains(TEXT("config is read-only")));
+	TestFalse(TEXT("not left busy"), State.IsBusy());
+	return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardModelEmptyScopeWatchTest, "Model.EmptyScopeClearsConfigBeforeWatch")
+bool FProsettaDashboardModelEmptyScopeWatchTest::RunTest(const FString&)
+{
+	FModelFixture Fixture;
+	TSharedRef<FRecordingRunner> Runner = MakeShared<FRecordingRunner>();
+	Fixture.Deps.Runner = Runner;
+	int32 Starts = 0;
+	Fixture.Deps.StartWatch = [&Starts](const FProsettaSyncProfile&) { ++Starts; };
+	TSharedRef<FProsettaDashboardModel> Model = Fixture.Make();
+	const FProsettaDashboardState& State = Model->GetState();
+
+	FString Error;
+	TestTrue(TEXT("switch to core"), Model->SwitchVolume(TEXT("core"), TEXT(""), false, Error));
+	Runner->Ops.Reset();
+	FProsettaSyncProfile Edited = State.Profile;
+	Edited.Mode = EProsettaSyncMode::Watch;
+	Edited.Volumes.Reset();
+	Model->SetProfile(Edited);
+
+	Runner->bFailConfig = true;
+	Model->StartWatch();
+	TestEqual(TEXT("failed clear does not start the watch"), Starts, 0);
+	TestFalse(TEXT("not left busy"), State.IsBusy());
+	Runner->bFailConfig = false;
+	Runner->Ops.Reset();
+
+	Model->StartWatch();
+	TestEqual(TEXT("empty scope clears the stale config scope"), FString::Join(Runner->Ops, TEXT(";")), FString(TEXT("config clear")));
+	TestEqual(TEXT("then the watch starts"), Starts, 1);
+	Runner->Ops.Reset();
+
+	Model->StartWatch();
+	TestTrue(TEXT("no second config write"), Runner->Ops.IsEmpty());
+	TestEqual(TEXT("watch started again"), Starts, 2);
 	return true;
 }
 

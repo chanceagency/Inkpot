@@ -102,6 +102,7 @@ FString FProsettaCredentialsSummary::Describe() const
 	else if (!ProjectId.IsEmpty()) { Text += FString::Printf(TEXT(" to project %s"), *ProjectId); }
 	if (!BaseUrl.IsEmpty()) { Text += FString::Printf(TEXT(" (%s)"), *BaseUrl); }
 	Text += FString::Printf(TEXT(" via %s"), *Source);
+	for (const FString& Warning : Warnings) { Text += TEXT(" Warning: ") + Warning; }
 	return Text;
 }
 
@@ -465,6 +466,17 @@ bool FProsettaDashboardModel::ParseCredentialsReport(const TSharedPtr<FJsonObjec
 		Out.bCliAvailable = FieldAsString(*Cli, TEXT("available")) == TEXT("true");
 		Out.CliCommand = FieldAsString(*Cli, TEXT("command"));
 	}
+	const TArray<TSharedPtr<FJsonValue>>* Candidates = nullptr;
+	if (Report->TryGetArrayField(TEXT("candidates"), Candidates))
+	{
+		for (const TSharedPtr<FJsonValue>& Candidate : *Candidates)
+		{
+			const TSharedPtr<FJsonObject>* Entry = nullptr;
+			if (!Candidate.IsValid() || !Candidate->TryGetObject(Entry)) { continue; }
+			const FString Warning = FieldAsString(*Entry, TEXT("warning"));
+			if (!Warning.IsEmpty()) { Out.Warnings.AddUnique(Warning); }
+		}
+	}
 	return true;
 }
 
@@ -655,6 +667,23 @@ void FProsettaDashboardModel::StartWatch()
 		return;
 	}
 	if (!Deps.StartWatch) { Fail(TEXT("No editor watch is installed (unattended editor?)."), EProsettaChangeKind::Info); return; }
+	if (Deps.Runner && State.Profile.ScopeString().IsEmpty() && !State.Credentials.ConfigVolumes.IsEmpty())
+	{
+		// The watch passes --volumes only when non-empty, so an empty scope would silently follow a stale config scope
+		// (e.g. left by a volume switch). Clear it first, then start.
+		if (State.IsBusy()) { Fail(FString::Printf(TEXT("Watch not started: the dashboard is busy (%s); try again."), *State.Busy), EProsettaChangeKind::Info); return; }
+		TWeakPtr<FProsettaDashboardModel> Weak = AsShared();
+		SetBusy(TEXT("Clearing the stale sync scope"));
+		ApplyConfigScope(FString(), [Weak](const FString& Error)
+		{
+			TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
+			if (!Self) { return; }
+			Self->ClearBusy();
+			if (!Error.IsEmpty()) { Self->Fail(TEXT("Watch not started: ") + Error); return; }
+			Self->StartWatch();
+		});
+		return;
+	}
 	if (Deps.IsWatchRunning ? Deps.IsWatchRunning() : State.bWatchRunning)
 	{
 		// The editor watch ignores Start while running and refuses it while the old CLI is stopping: stop now, start from Poll.
@@ -786,21 +815,38 @@ void FProsettaDashboardModel::SyncOnce()
 			Inner->ClearBusy();
 		}));
 	};
-	// `sync` reads its scope from the local config: write the profile's volumes there first (empty follows the config, like the watch).
+	// `sync` reads its scope from the local config: write the profile's volumes there first. An empty scope means the whole
+	// live project, so it clears a stale config scope (e.g. left by a volume switch) instead of following it.
 	const FString Scope = State.Profile.ScopeString();
-	if (Scope.IsEmpty() || Scope == State.Credentials.ConfigVolumes) { RunSync(); return; }
-	Deps.Runner->ConfigSetVolumes(Scope, FProsettaCliCompleted::CreateLambda([Weak, Scope, RunSync](const FProsettaCliResult& Result)
+	if (Scope == State.Credentials.ConfigVolumes) { RunSync(); return; }
+	ApplyConfigScope(Scope, [Weak, RunSync](const FString& Error)
+	{
+		TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
+		if (!Self) { return; }
+		if (!Error.IsEmpty())
+		{
+			Self->Fail(TEXT("Sync not started: ") + Error);
+			Self->ClearBusy();
+			return;
+		}
+		RunSync();
+	});
+}
+
+void FProsettaDashboardModel::ApplyConfigScope(const FString& Scope, TFunction<void(const FString& Error)> Done)
+{
+	TWeakPtr<FProsettaDashboardModel> Weak = AsShared();
+	Deps.Runner->ConfigSetVolumes(Scope, FProsettaCliCompleted::CreateLambda([Weak, Scope, Done = MoveTemp(Done)](const FProsettaCliResult& Result)
 	{
 		TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
 		if (!Self) { return; }
 		if (!Result.Succeeded())
 		{
-			Self->Fail(TEXT("Sync not started: could not write the sync scope to local config: ") + Result.UserError);
-			Self->ClearBusy();
+			Done(TEXT("could not write the sync scope to local config: ") + Result.UserError);
 			return;
 		}
 		Self->State.Credentials.ConfigVolumes = Scope;
-		RunSync();
+		Done(FString());
 	}));
 }
 
@@ -1117,7 +1163,9 @@ void FProsettaDashboardModel::NoteGenerationAccepted(const FString& GenerationId
 	Entry.Message = TEXT("Generation accepted by the watch importer.");
 	AddChange(MoveTemp(Entry));
 	RefreshManifest();
-	if (bReload) { EnqueueReload(false); }
+	// The accepted generation's reload carries the presentation import: the project's importer runs once per
+	// rebuilt generation here, and coalesces with any reload already queued (Rebuild, several accepts).
+	if (bReload) { EnqueueReload(true); }
 	else { Broadcast(); }
 }
 

@@ -109,6 +109,21 @@ class CredentialTests(unittest.TestCase):
                 home.write_text(json.dumps({'projectId':24}))
                 self.assertEqual(prosetta.fallback_config()['token'],'native')
 
+    def test_native_config_paths_follow_the_cli_per_platform(self):
+        home=Path('/home/dev')
+        def paths(platform, **environment):
+            with patch.object(prosetta.sys,'platform',platform), patch.object(prosetta.Path,'home',return_value=home), \
+                 patch.dict(prosetta.os.environ, environment, clear=True):
+                return prosetta.native_config_paths()
+        tail='Prosetta/SyncTool/config.json'
+        self.assertEqual(paths('darwin'),[home/'Library/Application Support'/tail])
+        self.assertEqual(paths('darwin',XDG_CONFIG_HOME='/x'),[home/'Library/Application Support'/tail])  # .NET ignores XDG on macOS
+        self.assertEqual(paths('linux'),[home/'.config'/tail])
+        self.assertEqual(paths('linux',XDG_CONFIG_HOME='/x'),[Path('/x')/tail])
+        self.assertEqual(paths('linux',XDG_CONFIG_HOME=''),[home/'.config'/tail])
+        self.assertEqual(paths('win32',APPDATA='/r',LOCALAPPDATA='/l'),[Path('/r')/tail])  # Roaming only; the CLI never uses Local
+        self.assertEqual(paths('win32'),[home/'AppData/Roaming'/tail])
+
     def test_local_precedence_does_not_read_home(self):
         local = {'projectId': 24, 'token': 'local', 'volumes': 'demo'}
         settings,token = prosetta.select_credentials(local, home_loader=lambda: self.fail('home read'), environment={}, check=lambda s,t: None)
