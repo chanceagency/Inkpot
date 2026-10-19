@@ -256,7 +256,7 @@ public:
 	void RefreshManifest();
 	/** The mirror changed outside the dashboard: detection only, never an import. */
 	void NoteExternalChange(const FString& What);
-	/** Records an accepted generation and queues the story asset reload (presentation already refreshed by the module). */
+	/** Records an accepted generation; when bReload, queues the story asset reload, which also runs the presentation import (coalesced with any queued reload). */
 	void NoteGenerationAccepted(const FString& GenerationId, bool bReload);
 	void AddChange(FProsettaChangeEntry Entry);
 	/** Seeds the change list from the receipts a terminal watch left in Directory (newest first). */
