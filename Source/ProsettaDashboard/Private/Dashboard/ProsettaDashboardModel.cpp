@@ -101,6 +101,7 @@ FString FProsettaCredentialsSummary::Describe() const
 	else if (!ProjectId.IsEmpty()) { Text += FString::Printf(TEXT(" to project %s"), *ProjectId); }
 	if (!BaseUrl.IsEmpty()) { Text += FString::Printf(TEXT(" (%s)"), *BaseUrl); }
 	Text += FString::Printf(TEXT(" via %s"), *Source);
+	for (const FString& Warning : Warnings) { Text += TEXT(" Warning: ") + Warning; }
 	return Text;
 }
 
@@ -463,6 +464,17 @@ bool FProsettaDashboardModel::ParseCredentialsReport(const TSharedPtr<FJsonObjec
 	{
 		Out.bCliAvailable = FieldAsString(*Cli, TEXT("available")) == TEXT("true");
 		Out.CliCommand = FieldAsString(*Cli, TEXT("command"));
+	}
+	const TArray<TSharedPtr<FJsonValue>>* Candidates = nullptr;
+	if (Report->TryGetArrayField(TEXT("candidates"), Candidates))
+	{
+		for (const TSharedPtr<FJsonValue>& Candidate : *Candidates)
+		{
+			const TSharedPtr<FJsonObject>* Entry = nullptr;
+			if (!Candidate.IsValid() || !Candidate->TryGetObject(Entry)) { continue; }
+			const FString Warning = FieldAsString(*Entry, TEXT("warning"));
+			if (!Warning.IsEmpty()) { Out.Warnings.AddUnique(Warning); }
+		}
 	}
 	return true;
 }

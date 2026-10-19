@@ -665,6 +665,13 @@ bool FProsettaDashboardModelParseTest::RunTest(const FString&)
 	TestEqual(TEXT("native source kept"), Leaky.Source, FString(TEXT("native")));
 	TestTrue(TEXT("native counts as credentials"), Leaky.HasCredentials());
 	TestFalse(TEXT("summary never echoes a token"), Leaky.Describe().Contains(TEXT("must-not-leak")));
+	TestEqual(TEXT("no warnings for a 600 file"), Leaky.Warnings.Num(), 0);
+
+	FProsettaCredentialsSummary Loose;
+	TestTrue(TEXT("report with a file warning parses"), FProsettaDashboardModel::ParseCredentialsReport(ParseJsonObject(
+		TEXT(R"({"source":"home","candidates":[{"kind":"home","path":"/h/config.json","exists":true,"hasToken":true,"mode":"644","warning":"Token file is readable by other users (mode 644); run chmod 600 on it."},{"kind":"native","exists":false,"warning":null}],"cli":{"available":true}})")), Loose));
+	TestEqual(TEXT("one warning kept"), Loose.Warnings.Num(), 1);
+	TestTrue(TEXT("warning shown to the user"), Loose.Describe().Contains(TEXT("chmod 600")));
 
 	FString Owner, Project;
 	FProsettaDashboardModel::ParseWhoami(ParseJsonObject(TEXT(R"({"user":{"email":"dev@example.invalid"},"project":{"name":"Sample","identifier":"sample"}})")), Owner, Project);
