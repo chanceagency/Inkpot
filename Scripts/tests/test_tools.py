@@ -52,6 +52,11 @@ class ProjectLayoutTests(unittest.TestCase):
             self.assertEqual(prosetta.native_bindings_destination(root, {'PROSETTA_NATIVE_BINDINGS_DIR': 'Source/Other'}), root / 'Source/Other')
             blueprint_only = self.make_project(Path(temp) / 'Blueprints', [])
             self.assertIsNone(prosetta.native_bindings_destination(blueprint_only, {}))
+            editor_first = Path(temp) / 'EditorFirst'
+            editor_first.mkdir()
+            (editor_first / 'Game.uproject').write_text(json.dumps({'Modules': [
+                {'Name': 'GameEditor', 'Type': 'Editor'}, {'Name': 'Game', 'Type': 'Runtime'}]}))
+            self.assertEqual(prosetta.native_bindings_destination(editor_first, {}), editor_first / 'Source/Game/Prosetta/NativeBindings')
 
     def test_bindings_without_module_are_reported_not_copied(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -409,6 +414,7 @@ class WatchTests(unittest.TestCase):
             self.assertEqual(prosetta.main(['watch', '10', '--no-mirror']), 0)  # Pre-0.10 interval is dropped.
             self.assertEqual(prosetta.main(['watch-import']), 0)
             self.assertEqual(prosetta.main(['watch', '--config', 'other.json']), 1)
+            self.assertEqual(prosetta.main(['sync', '--config=other.json']), 1)
         self.assertEqual(calls[0][0], ['watch', '--channel', 'latest-release', '--volumes', 'core'])
         self.assertIsInstance(calls[0][1]['on_lines'], prosetta.WatchPublisher)
         self.assertEqual(calls[1][0], ['watch', '--no-mirror'])

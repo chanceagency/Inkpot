@@ -58,7 +58,7 @@ FText SProsettaDashboard::CliItemText() const
 		return FText::Format(LOCTEXT("CliFound", "prosetta-sync CLI found{0}"), State.CliVersion.IsEmpty() ? FText::GetEmpty() : FText::FromString(TEXT(" (") + State.CliVersion + TEXT(")")));
 	}
 	if (!State.CliSetupProblem.IsEmpty()) { return FText::FromString(State.CliSetupProblem); }
-	return LOCTEXT("CliMissing", "prosetta-sync CLI not found: install it (pipx install prosetta-sync) or set the CLI override in the profile");
+	return LOCTEXT("CliMissing", "prosetta-sync CLI not found: install it (curl -fsSL https://downloads.prosetta.studio/cli/install.sh | bash) or set the CLI override in the profile");
 }
 
 FText SProsettaDashboard::CredentialsItemText() const

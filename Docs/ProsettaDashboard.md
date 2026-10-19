@@ -182,7 +182,7 @@ python3 Plugins/Inkpot/Scripts/prosetta.py watch
 ```
 
 `native-bindings` (also run after `sync`) copies Prosetta's generated C++ into
-`Source/<first .uproject module>/Prosetta/NativeBindings`. Set
+`Source/<first runtime .uproject module>/Prosetta/NativeBindings`. Set
 `PROSETTA_NATIVE_BINDINGS_DIR` to use another folder. `import`, `sync-import`,
 `watch-import` and `relay` need project helpers (`Scripts/import-prosetta.py`
 with a story import commandlet, `Scripts/prosetta-relay.py`). The plugin does not

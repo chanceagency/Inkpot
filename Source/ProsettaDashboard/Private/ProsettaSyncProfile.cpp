@@ -58,7 +58,8 @@ bool FProsettaSyncProfile::Validate(TArray<FText>& OutErrors) const
 		{
 			OutErrors.Add(LOCTEXT("LatestReleaseOneVolume", "The latest-release channel watches exactly one volume."));
 		}
-		if (bImportOnAccept && !AudioDecoderPath.FilePath.IsEmpty() && !FPaths::FileExists(AudioDecoderPath.FilePath))
+		// A relative name ("ffmpeg") is looked up on PATH when the decoder is resolved (ResolveProsettaAudioDecoder).
+		if (bImportOnAccept && !AudioDecoderPath.FilePath.IsEmpty() && !FPaths::IsRelative(AudioDecoderPath.FilePath) && !FPaths::FileExists(AudioDecoderPath.FilePath))
 		{
 			OutErrors.Add(FText::Format(LOCTEXT("DecoderMissing", "Audio decoder not found: {0}"), FText::FromString(AudioDecoderPath.FilePath)));
 		}
@@ -74,7 +75,7 @@ bool FProsettaSyncProfile::Validate(TArray<FText>& OutErrors) const
 		}
 		if (Lower.Contains(TEXT("api.prosetta.dev")))
 		{
-			OutErrors.Add(LOCTEXT("StagingRelay", "api.prosetta.dev is behind Vercel protection: run the loopback relay (prosetta.py relay) and use http://127.0.0.1:61417."));
+			OutErrors.Add(LOCTEXT("StagingRelay", "api.prosetta.dev is behind Vercel protection: run the loopback relay (prosetta.py relay, which needs the project's Scripts/prosetta-relay.py) and use http://127.0.0.1:61417."));
 		}
 	}
 	if (!ProjectId.IsEmpty() && !ProjectId.IsNumeric())

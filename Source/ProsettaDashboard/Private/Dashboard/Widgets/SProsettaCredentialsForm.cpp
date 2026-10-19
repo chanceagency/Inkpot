@@ -63,7 +63,7 @@ void SProsettaCredentialsForm::Construct(const FArguments& InArgs, TSharedRef<IP
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
 			[
 				SNew(SSimpleButton).Tag(TEXT("Prosetta.PresetRelay")).Text(LOCTEXT("StagingRelay", "Staging relay"))
-				.ToolTipText(LOCTEXT("StagingRelayTip", "api.prosetta.dev through the loopback relay (prosetta.py relay)"))
+				.ToolTipText(LOCTEXT("StagingRelayTip", "api.prosetta.dev through the loopback relay (prosetta.py relay; needs the project's Scripts/prosetta-relay.py)"))
 				.OnClicked_Lambda([this]() { SetBaseUrl(StagingRelayUrl); return FReply::Handled(); })
 			]
 			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
@@ -125,7 +125,7 @@ FText SProsettaCredentialsForm::PresetNote() const
 	{
 		return FPaths::FileExists(RelayStatePath())
 			? LOCTEXT("RelayUp", "Relay state found in Saved/ProsettaSync; the relay was started in a terminal.")
-			: LOCTEXT("RelayDown", "No relay state yet: run prosetta.py relay in a terminal first.");
+			: LOCTEXT("RelayDown", "No relay state yet: run prosetta.py relay in a terminal first (it needs the project's Scripts/prosetta-relay.py, which the plugin does not ship).");
 	}
 	if (GetBaseUrl() == LocalDevUrl) { return LOCTEXT("LocalNote", "A Prosetta dev server on this machine; use its dev token."); }
 	return FText::GetEmpty();

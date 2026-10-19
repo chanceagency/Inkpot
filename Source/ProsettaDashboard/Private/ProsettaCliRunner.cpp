@@ -165,7 +165,16 @@ void FProsettaCliRunner::StartNext()
 		Run->Process = FPlatformProcess::CreateProc(*Python, *CommandLine, false, true, true, nullptr, 0, *WorkingDir, Run->StdoutWrite, StdinRead);
 		if (StdinWrite)
 		{
-			if (Run->Process.IsValid()) { FPlatformProcess::WritePipe(StdinWrite, Request.StdinSecret + TEXT("\n")); }
+			if (Run->Process.IsValid())
+			{
+				// Written as bytes we zero afterwards: the FString overload would leave an unwiped UTF-8 copy behind.
+				FTCHARToUTF8 Utf8(*Request.StdinSecret, Request.StdinSecret.Len());
+				TArray<uint8> Line(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+				Line.Add('\n');
+				FPlatformProcess::WritePipe(StdinWrite, Line.GetData(), Line.Num());
+				FPlatformMemory::Memzero(Line.GetData(), Line.Num());
+				FPlatformMemory::Memzero(const_cast<void*>(static_cast<const void*>(Utf8.Get())), Utf8.Length());
+			}
 			// The child holds its own copy of the read end; closing ours sends EOF after the one line.
 			FPlatformProcess::ClosePipe(StdinRead, StdinWrite);
 		}
@@ -310,10 +319,8 @@ int32 FProsettaCliRunner::Sync(const FProsettaSyncProfile& Profile, FProsettaCli
 	FProsettaCliRequest Request;
 	Request.Command = TEXT("sync");
 	Request.Args = {TEXT("--json")};
-	if (Profile.bRepair) { Request.Args.Add(TEXT("--repair")); }
-	if (Profile.bSnapshot) { Request.Args.Add(TEXT("--snapshot")); }
-	Request.BaseUrl = Profile.BaseUrl;
-	Request.ProjectId = Profile.ProjectId;
+	// --repair, --snapshot and the profile's connection overrides.
+	Request.Args.Append(Profile.BuildSyncFlags());
 	Request.TimeoutSeconds = 600.f;
 	return Enqueue(MoveTemp(Request), MoveTemp(OnComplete), MoveTemp(OnLine));
 }

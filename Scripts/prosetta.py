@@ -35,9 +35,12 @@ def project_root(environment=None, script=None):
     return here.parent
 
 
+EDITOR_ONLY_MODULE_TYPES = ('Editor', 'EditorNoCommandlet', 'EditorAndProgram', 'Developer', 'DeveloperTool', 'UncookedOnly', 'Program')
+
+
 def native_bindings_destination(root, environment=None):
     """Where `native-bindings` copies Prosetta's generated C++: PROSETTA_NATIVE_BINDINGS_DIR, else
-    Source/<first .uproject module>/Prosetta/NativeBindings. None when the project has no C++ module."""
+    Source/<first runtime .uproject module>/Prosetta/NativeBindings. None when the project has no runtime C++ module."""
     environment = os.environ if environment is None else environment
     if environment.get('PROSETTA_NATIVE_BINDINGS_DIR'):
         path = Path(environment['PROSETTA_NATIVE_BINDINGS_DIR'])
@@ -47,7 +50,9 @@ def native_bindings_destination(root, environment=None):
             modules = json.loads(project.read_text(encoding='utf-8-sig')).get('Modules') or []
         except (OSError, ValueError):
             continue
-        name = next((module.get('Name') for module in modules if isinstance(module, dict) and module.get('Name')), None)
+        # The bindings are game code: an editor-only module would leave packaged builds without them.
+        name = next((module.get('Name') for module in modules if isinstance(module, dict) and module.get('Name')
+                     and module.get('Type', 'Runtime') not in EDITOR_ONLY_MODULE_TYPES), None)
         if name:
             return Path(root) / 'Source' / name / 'Prosetta' / 'NativeBindings'
     return None
@@ -513,7 +518,7 @@ def copy_native_bindings(source=NATIVE_SOURCE, destination=NATIVE_DEST, manifest
         out('No Prosetta native binding sources in the mirror; nothing to copy.')
         return [], []
     if destination is None:
-        out('Prosetta native binding sources were synced, but this project has no C++ module to copy them into; '
+        out('Prosetta native binding sources were synced, but this project has no runtime C++ module to copy them into; '
             'set PROSETTA_NATIVE_BINDINGS_DIR to a module folder to copy them.')
         return [], []
     destination = Path(destination)
@@ -726,6 +731,9 @@ def main(args=None):
                     state = 'token' if entry['hasToken'] else ('present' if entry['exists'] else 'absent')
                     print(f"  {entry['kind']:<6} {state:<7} {entry['path']}" + (f"  ({entry['warning']})" if entry['warning'] else ''))
             return 0
+        # Do not allow a passthrough config to bypass project-local isolation (sync included).
+        if '--config' in args or any(x.startswith('--config=') for x in args):
+            raise RuntimeError('Wrappers manage --config; invoke the CLI directly for another config.')
         if command == 'sync':
             code = run_cli(['sync', *args])
             if code == 0: copy_native_bindings()
@@ -736,9 +744,6 @@ def main(args=None):
             return code or run_import(args)
         if command not in ('sync', 'watch', 'watch-import', 'verify', 'whoami', 'volumes', 'build', 'config', 'init'):
             raise RuntimeError(f'Unknown command: {command}')
-        # Do not allow a passthrough config to bypass project-local isolation.
-        if '--config' in args or any(x.startswith('--config=') for x in args):
-            raise RuntimeError('Wrappers manage --config; invoke the CLI directly for another config.')
         if command == 'watch-import':
             return run_cli(watch_arguments(args), on_lines=WatchImporter())
         if command == 'watch':

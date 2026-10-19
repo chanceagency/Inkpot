@@ -29,6 +29,7 @@
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeExit.h"
+#include "ScopedTransaction.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "UObject/StrongObjectPtr.h"
@@ -240,6 +241,10 @@ bool FProsettaDashboardProfileValidateTest::RunTest(const FString&)
 	Decoder.bImportOnAccept = true;
 	Decoder.AudioDecoderPath.FilePath = TransientDir(TEXT("MissingDecoder")) / TEXT("ffmpeg");
 	TestFalse(TEXT("missing decoder refused under watch"), Decoder.Validate(Errors));
+	Errors.Reset();
+	Decoder.AudioDecoderPath.FilePath = TEXT("ffmpeg");
+	TestTrue(TEXT("bare decoder name is left to the PATH lookup"), Decoder.Validate(Errors));
+	Decoder.AudioDecoderPath.FilePath = TransientDir(TEXT("MissingDecoder")) / TEXT("ffmpeg");
 	Decoder.bImportOnAccept = false;
 	Errors.Reset();
 	TestTrue(TEXT("decoder ignored without import"), Decoder.Validate(Errors));
@@ -650,6 +655,8 @@ bool FProsettaDashboardRePointTest::RunTest(const FString&)
 		GEngine->DestroyWorldContext(World);
 		World->DestroyWorld(false);
 	};
+	// RePointWorld's transactions join this one, which is cancelled so the editor's undo buffer keeps nothing from this throwaway world.
+	FScopedTransaction Scratch(NSLOCTEXT("ProsettaDashboardTests", "RePointScratch", "Prosetta re-point test"));
 	FString Error;
 	TestTrue(TEXT("default host class"), UProsettaDashboardSubsystem::StorySourceHostClass() == AProsettaStorySourceActor::StaticClass());
 	TestNull(TEXT("no host yet"), ProsettaStorySource::FindHost(World));
@@ -662,6 +669,7 @@ bool FProsettaDashboardRePointTest::RunTest(const FString&)
 	TestEqual(TEXT("re-pointed"), ProsettaStorySource::ForWorld(World).Describe(), FString(TEXT("volume side")));
 	TestFalse(TEXT("no world is refused"), UProsettaDashboardSubsystem::RePointWorld(nullptr, TEXT("core"), TEXT(""), Error));
 	TestFalse(TEXT("refusal explains"), Error.IsEmpty());
+	Scratch.Cancel();
 	return true;
 }
 

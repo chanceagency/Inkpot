@@ -179,13 +179,19 @@ bool FProsettaVolumeSwitchDialog::Perform(TSharedRef<IProsettaDashboardModel> Mo
 	{
 		TWeakPtr<IProsettaDashboardModel> WeakModel = Model;
 		TSharedRef<FDelegateHandle> Handle = MakeShared<FDelegateHandle>();
-		*Handle = FEditorDelegates::EndPIE.AddLambda([WeakModel, Slug, Tag, bRepoint, Handle](bool)
+		// ShutdownPIE, not EndPIE: EndPIE is broadcast while GEditor->PlayWorld is still set, so SwitchVolume would refuse.
+		*Handle = FEditorDelegates::ShutdownPIE.AddLambda([WeakModel, Slug, Tag, bRepoint, Handle](bool)
 		{
-			FEditorDelegates::EndPIE.Remove(*Handle);
-			if (TSharedPtr<IProsettaDashboardModel> Pinned = WeakModel.Pin())
+			// Removing this binding destroys the lambda and its captures, so copy what the switch needs first.
+			const TSharedPtr<IProsettaDashboardModel> Pinned = WeakModel.Pin();
+			const FString SwitchSlug = Slug;
+			const FString SwitchTag = Tag;
+			const bool bSwitchRepoint = bRepoint;
+			FEditorDelegates::ShutdownPIE.Remove(*Handle);
+			if (Pinned)
 			{
 				FString Error;
-				if (!Pinned->SwitchVolume(Slug, Tag, bRepoint, Error)) { ProsettaWidgets::Notify(FText::FromString(Error), true); }
+				if (!Pinned->SwitchVolume(SwitchSlug, SwitchTag, bSwitchRepoint, Error)) { ProsettaWidgets::Notify(FText::FromString(Error), true); }
 			}
 		});
 		GEditor->RequestEndPlayMap();

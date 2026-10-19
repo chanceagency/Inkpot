@@ -47,7 +47,7 @@ public:
 	/** Shows the modal; returns false when a modal cannot be shown (headless). */
 	static bool Show(TSharedRef<IProsettaDashboardModel> Model, const FProsettaVolumeSummary& Volume);
 	/**
-	 * Switches the sync scope, during PIE after stopping Play (one-shot EndPIE hook). Returns false
+	 * Switches the sync scope, during PIE after stopping Play (one-shot ShutdownPIE hook). Returns false
 	 * when the model refused; the error is toasted.
 	 */
 	static bool Perform(TSharedRef<IProsettaDashboardModel> Model, const FString& Slug, const FString& Tag, bool bRepoint, bool bPIE);

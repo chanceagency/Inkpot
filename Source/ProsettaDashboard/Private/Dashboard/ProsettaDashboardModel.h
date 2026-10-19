@@ -293,6 +293,8 @@ private:
 	void HandleSyncResult(const FProsettaCliResult& Result, bool bWasVolumeSwitch);
 	void AddChangesFromSyncLines(const TArray<TSharedPtr<FJsonObject>>& Objects);
 	bool DoReload();
+	/** Has Poll start the watch once the stopped CLI is gone, giving up after WatchRestartTimeoutSeconds. */
+	void QueueWatchRestart();
 	/** Starts the watch a restart stopped, once the old CLI is gone; true when the restart finished or gave up. */
 	bool TryRestartWatch();
 	/** Store->IsDirty, re-evaluated only when the working copy or the profile file changed. */

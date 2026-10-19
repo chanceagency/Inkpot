@@ -398,6 +398,7 @@ bool FProsettaDashboardModel::SaveProfileAs(const FString& NewName, FString& Out
 	State.Profile.Name = NewName;
 	State.ProfileNames = Deps.Store->List();
 	SetActiveProfileName(NewName);
+	if (Deps.ApplyProfileEnvironment) { Deps.ApplyProfileEnvironment(State.Profile); }
 	Recompute();
 	Broadcast();
 	return true;
@@ -424,6 +425,7 @@ bool FProsettaDashboardModel::DeleteProfile(const FString& Name, FString& OutErr
 	{
 		SetActiveProfileName(Deps.DefaultProfileName);
 		State.Profile = Deps.Store->EnsureDefault(Deps.DefaultProfileName);
+		if (Deps.ApplyProfileEnvironment) { Deps.ApplyProfileEnvironment(State.Profile); }
 	}
 	State.ProfileNames = Deps.Store->List();
 	Recompute();
@@ -656,8 +658,7 @@ void FProsettaDashboardModel::StartWatch()
 	{
 		// The editor watch ignores Start while running and refuses it while the old CLI is stopping: stop now, start from Poll.
 		if (Deps.StopWatch) { Deps.StopWatch(); }
-		bWatchRestartPending = true;
-		WatchRestartDeadline = FPlatformTime::Seconds() + WatchRestartTimeoutSeconds;
+		QueueWatchRestart();
 		FProsettaChangeEntry Entry;
 		Entry.Time = FDateTime::UtcNow();
 		Entry.Message = TEXT("Watch restarting with the current profile.");
@@ -672,6 +673,12 @@ void FProsettaDashboardModel::StartWatch()
 	Entry.Message = FString::Printf(TEXT("Watch started (%s, scope %s)."), *State.Profile.ChannelName(), State.Profile.ScopeString().IsEmpty() ? TEXT("project") : *State.Profile.ScopeString());
 	AddChange(MoveTemp(Entry));
 	Broadcast();
+}
+
+void FProsettaDashboardModel::QueueWatchRestart()
+{
+	bWatchRestartPending = true;
+	WatchRestartDeadline = FPlatformTime::Seconds() + WatchRestartTimeoutSeconds;
 }
 
 bool FProsettaDashboardModel::TryRestartWatch()
@@ -850,6 +857,7 @@ bool FProsettaDashboardModel::SwitchVolume(const FString& Slug, const FString& T
 	const bool bWatchWasRunning = Deps.IsWatchRunning ? Deps.IsWatchRunning() : State.bWatchRunning;
 	const bool bFixedTag = !Tag.IsEmpty() && Tag != TEXT("latest");
 	if (bWatchWasRunning) { StopWatch(); }
+	const FProsettaSyncProfile Previous = State.Profile;
 	// The profile follows the swap so Run and the watch use the same scope.
 	FProsettaVolumeScope Scope;
 	Scope.Slug = Slug;
@@ -859,13 +867,16 @@ bool FProsettaDashboardModel::SwitchVolume(const FString& Slug, const FString& T
 	Recompute();
 	TWeakPtr<FProsettaDashboardModel> Weak = AsShared();
 	SetBusy(FString::Printf(TEXT("Switching to volume %s"), *Slug));
-	Deps.Runner->ConfigSetVolumes(Scope.ToString(), FProsettaCliCompleted::CreateLambda([Weak, Slug, Tag, bRepoint, bWatchWasRunning, bFixedTag](const FProsettaCliResult& Result)
+	Deps.Runner->ConfigSetVolumes(Scope.ToString(), FProsettaCliCompleted::CreateLambda([Weak, Slug, Tag, bRepoint, bWatchWasRunning, bFixedTag, Previous](const FProsettaCliResult& Result)
 	{
 		TSharedPtr<FProsettaDashboardModel> Self = Weak.Pin();
 		if (!Self) { return; }
 		if (!Result.Succeeded())
 		{
 			Self->Fail(TEXT("Could not set the sync scope: ") + Result.UserError);
+			// Nothing was switched: put the profile back and resume the watch the switch stopped.
+			Self->State.Profile = Previous;
+			if (bWatchWasRunning) { Self->QueueWatchRestart(); }
 			Self->ClearBusy();
 			return;
 		}
@@ -887,6 +898,8 @@ void FProsettaDashboardModel::ContinueSwitchVolume(const FString& Slug, const FS
 		if (!Result.Succeeded())
 		{
 			Self->Fail(FString::Printf(TEXT("Sync of volume %s failed: %s"), *Slug, *Result.UserError));
+			// The scope is already switched; the watch the switch stopped resumes on it.
+			if (bRestartWatch) { Self->QueueWatchRestart(); }
 			Self->ClearBusy();
 			return;
 		}
