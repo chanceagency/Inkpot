@@ -2,8 +2,20 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.47.24** of the plugin.</br>
+This is version **1.48.24** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
+
+## Prosetta Dashboard
+
+The plugin includes the **Prosetta Dashboard**, an editor tab for the whole sync loop: credentials, sync profiles, volumes, the watch and recent changes.
+
+1. Copy the plugin to `<Project>/Plugins/Inkpot` and enable **Inkpot** (**Edit > Plugins**, or `{ "Name": "Inkpot", "Enabled": true }` under `Plugins` in the `.uproject`). Rebuild the editor target.
+2. Open the dashboard from **Tools > Prosetta Dashboard**, the **Prosetta** toolbar button, or **Ctrl+Alt+P**.
+3. Follow the first-run checklist. **Connect…** pipes the project token to `prosetta.py init --token-stdin`, so the token never appears on a command line, in a log or in a settings file.
+
+Prerequisites: Prosetta Sync CLI 0.10.0 or later, the .NET 10 runtime, and Python 3.11 or later. The editor uses Unreal's bundled Python. The `prosetta.py` wrapper and the pinned-FFmpeg bootstrap ship in `Plugins/Inkpot/Scripts`, and a project's own `Scripts/prosetta.py` takes precedence. Profiles default to `Config/ProsettaSync/Profiles`.
+
+[Docs/ProsettaDashboard.md](Docs/ProsettaDashboard.md) covers setup, settings, the `IProsettaStorySourceHost` level seam, project extension points and the scripts.
 
 ## Prosetta line tags
 
@@ -39,6 +51,11 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.48.24)
+The Prosetta Dashboard moved from the InkpotSandbox sample into the plugin as the new `ProsettaDashboard` editor module (`FProsettaDashboardModule`, `UProsettaDashboardSubsystem`, the tab, commands and Slate widgets, sync profiles, the CLI runner, the editor-owned project watch with its pinned-FFmpeg decoder, and story asset rebuild). It includes the sandbox review fixes: scoped package saves, the profile's volume scope applied before Sync once, watch restart, whoami error classification, an inherited `PROSETTA_SYNC_BIN`, and Ctrl+Alt+P bound after engine init.<br>
+The Inkpot runtime gains `FProsettaStorySource`, the `ProsettaStorySource::` manifest path resolution, `UProsettaSyncInspector` (manifest, scope, volumes and watch-event parsing, `RedactCredentialLine`) and `IProsettaEditorWatch`. Levels choose their story through the new `IProsettaStorySourceHost` interface, with `AProsettaStorySourceActor` as the default host. The dashboard re-points a level through this interface and spawns the host class from **Project Settings > Prosetta Sync** when a level has none. Presentation import (voice, portraits) is a project hook (`SetPresentationImporter`).<br>
+`Scripts/prosetta.py`, `Scripts/ffmpeg.py` and the FFmpeg lock and notices ship with the plugin. The wrapper serves `PROSETTA_PROJECT_ROOT` (exported by the editor) or the nearest `.uproject` folder, copies native bindings into the project's first runtime module (or `PROSETTA_NATIVE_BINDINGS_DIR`), and falls back to an installed `prosetta-sync` when no CLI build is vendored. When the wrapper or its Python is missing, the dashboard's first-run checklist says where it looked. The Stop watch and Revert profile buttons now use brushes that exist in UE 5.8 (`Icons.Stop` and `Icons.Undo` do not). Covered by `Inkpot.Prosetta.Dashboard.*`, `Inkpot.Prosetta.ImportCache.Watch*`, `Inkpot.Prosetta.StorySource.*` and `Scripts/tests/test_tools.py`.<br>
 
 ### Prosetta-specific changes (1.47.24)
 `FProsettaReceiptWatch` (InkpotEditor) is a directory transport for completions produced outside the editor, for example by a terminal wrapper around `prosetta-sync watch`: each `*.json` file in a watched directory is a schemaVersion 1 `generation-completed` event, written under a temporary name and renamed into place, one file per project, scope and channel. Unreal's DirectoryWatcher only raises a flag; receipts are read on the core ticker and handed to `ConsumeEvent` on the game thread, once per content, with `ConfigureExternalWatch` and the project's decoder resolver applied on the first hand-off. Receipts already present when the watch is created are handed off once, a receipt `ConsumeEvent` rejects is offered again on the next change, and in-flight temporary files, other event types and malformed JSON are ignored. A receipt whose generation the importer already has (`UProsettaWatchSubsystem::IsGenerationCurrent`, for example one left from an earlier session) is recorded without a hand-off, so it neither stops a plugin-owned CLI watch nor reports an external producer that is not running. A new generation retakes the transport whenever the importer does not have it (`HasExternalWatch`), including after `StartWatch`; `Connect()` takes it back explicitly when the project starts its own producer. Covered by `Inkpot.Prosetta.WatchReceipts` and `Inkpot.Prosetta.WatchReceiptTransport`.<br>
@@ -270,7 +287,7 @@ This can lead to some confusion when running Inky alongside Unreal & Inkpot.<br>
 
 
 ## Module Structure
-Inkpot is made from three modules. <br>
+Inkpot is made from four modules. <br>
 
 ### InkPlusPlus
 InkPlusPlus is the name of the module that contains the C++ port of the Ink Engine Runtime which can be found here</br>
@@ -288,12 +305,18 @@ This is the unreal editor facing part of Ink pot.</br>
 This manages the defintion of data types in Unreal for inkpot and the compilation of new Ink scripts as they are added to the project.</br>
 It also contains the unit tests for InkPlusPlus.</br>
 
+### ProsettaDashboard
+Editor-only. The Prosetta Dashboard tab and the sync tooling behind it: profiles, the `prosetta.py` runner, the editor-owned watch and story asset rebuild. See [Docs/ProsettaDashboard.md](Docs/ProsettaDashboard.md).</br>
+
 ## Other folders
 There area couple of supporting folders that make up the Inkpot distribution.<br>
 
 ### TestInkSource
 All the Unit tests for Ink.</br> 
 Currently 180 tests.
+
+### Scripts
+`prosetta.py` (the Prosetta Sync wrapper the dashboard runs), `ffmpeg.py` with its lock file and notices, and their Python tests.<br>
 
 ### Third Party 
 This contains a copy of InkleCate and is used by the script importer to compile the scripts.<br>
