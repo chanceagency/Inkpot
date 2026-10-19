@@ -1105,7 +1105,9 @@ void FProsettaDashboardModel::NoteGenerationAccepted(const FString& GenerationId
 	Entry.Message = TEXT("Generation accepted by the watch importer.");
 	AddChange(MoveTemp(Entry));
 	RefreshManifest();
-	if (bReload) { EnqueueReload(false); }
+	// The accepted generation's reload carries the presentation import: the project's importer runs once per
+	// rebuilt generation here, and coalesces with any reload already queued (Rebuild, several accepts).
+	if (bReload) { EnqueueReload(true); }
 	else { Broadcast(); }
 }
 

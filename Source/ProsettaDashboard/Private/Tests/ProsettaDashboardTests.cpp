@@ -544,6 +544,7 @@ namespace
 		bool bPIE = false;
 		bool bSafe = true;
 		int32 Reloads = 0;
+		int32 PresentationReloads = 0;
 		int32 RePoints = 0;
 		int32 Toasts = 0;
 		TArray<FString> ToastTexts;
@@ -557,7 +558,7 @@ namespace
 			Deps.MirrorRoot = Root / TEXT("Mirror");
 			Deps.IsPIE = [this]() { return bPIE; };
 			Deps.SafeToApply = [this]() { return bSafe; };
-			Deps.Reload = [this](const FProsettaSyncProfile&, const FString&, bool, FString&) { ++Reloads; return true; };
+			Deps.Reload = [this](const FProsettaSyncProfile&, const FString&, bool bWithPresentation, FString&) { ++Reloads; if (bWithPresentation) { ++PresentationReloads; } return true; };
 			Deps.RePoint = [this](const FString&, const FString&, FString&) { ++RePoints; return true; };
 			Deps.Toast = [this](const FText& Text, EProsettaToastKind) { ++Toasts; ToastTexts.Add(Text.ToString()); };
 		}
@@ -801,6 +802,54 @@ bool FProsettaDashboardModelReloadPIETest::RunTest(const FString&)
 	Model->Poll(Input);
 	TestEqual(TEXT("not repeated"), Fixture.Reloads, 1);
 	TestFalse(TEXT("TryRunPendingReload idle"), Model->TryRunPendingReload());
+	return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardModelAcceptedPresentationTest, "Model.AcceptedGenerationImportsPresentationOnce")
+bool FProsettaDashboardModelAcceptedPresentationTest::RunTest(const FString&)
+{
+	FModelFixture Fixture;
+	WriteManifest(Fixture.Deps.MirrorRoot, TEXT("gen-1"));
+	TSharedRef<FProsettaDashboardModel> Model = Fixture.Make();
+
+	// One accepted generation: one reload, and it asks for the presentation import.
+	Model->NoteGenerationAccepted(TEXT("gen-1"), true);
+	TestEqual(TEXT("one reload"), Fixture.Reloads, 1);
+	TestEqual(TEXT("with presentation"), Fixture.PresentationReloads, 1);
+
+	// Import On Accept off: no reload at all.
+	Model->NoteGenerationAccepted(TEXT("gen-2"), false);
+	TestEqual(TEXT("no reload when off"), Fixture.Reloads, 1);
+
+	// Several generations accepted, then Rebuild, while Play defers the reload: still one run, one import.
+	Fixture.bPIE = true;
+	Model->NoteGenerationAccepted(TEXT("gen-3"), true);
+	Model->NoteGenerationAccepted(TEXT("gen-4"), true);
+	Model->ReimportLastGeneration();
+	TestEqual(TEXT("deferred"), Fixture.Reloads, 1);
+	Fixture.bPIE = false;
+	FProsettaDashboardPollInput Input;
+	Input.bSafeToApply = true;
+	Model->Poll(Input);
+	TestEqual(TEXT("coalesced into one reload"), Fixture.Reloads, 2);
+	TestEqual(TEXT("coalesced into one import"), Fixture.PresentationReloads, 2);
+	Model->Poll(Input);
+	TestEqual(TEXT("not repeated"), Fixture.PresentationReloads, 2);
+
+	// A story-only request that queues first must still upgrade to the import when an accept joins it.
+	Fixture.bSafe = false;
+	Model->EnqueueReload(false);
+	Model->NoteGenerationAccepted(TEXT("gen-5"), true);
+	Fixture.bSafe = true;
+	Input.bSafeToApply = true;
+	Model->Poll(Input);
+	TestEqual(TEXT("one reload for the joined request"), Fixture.Reloads, 3);
+	TestEqual(TEXT("joined request imports"), Fixture.PresentationReloads, 3);
+
+	// The flag resets: a later plain reload is story-only.
+	Model->EnqueueReload(false);
+	TestEqual(TEXT("plain reload ran"), Fixture.Reloads, 4);
+	TestEqual(TEXT("plain reload is story-only"), Fixture.PresentationReloads, 3);
 	return true;
 }
 
