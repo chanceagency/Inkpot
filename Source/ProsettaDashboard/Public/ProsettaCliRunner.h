@@ -34,6 +34,8 @@ struct FProsettaCliResult
 	TArray<FString> JsonLines;
 	/** Whitelisted, redacted wrapper/CLI diagnostics (usage errors, wrapper failures). */
 	TArray<FString> Notices;
+	/** A notice said the token itself was judged (rejected, expired, other project, missing). Set before redaction, which would hide the wording. */
+	bool bCredentialRejection = false;
 	/** Redacted plain stdout when bCaptureText was set. */
 	TArray<FString> TextLines;
 	/** What to tell the user when the run did not succeed. */
@@ -55,7 +57,7 @@ class PROSETTADASHBOARD_API FProsettaCliRunner
 {
 public:
 	FProsettaCliRunner(FString Python, FString Script, FString WorkingDir);
-	~FProsettaCliRunner();
+	virtual ~FProsettaCliRunner();
 	UE_NONCOPYABLE(FProsettaCliRunner);
 
 	/** Queues a run; returns its id. OnLine receives each JSON object as it streams in. */
@@ -83,9 +85,9 @@ public:
 	int32 Volumes(const FProsettaSyncProfile& Profile, FProsettaCliCompleted OnComplete);
 	int32 Version(FProsettaCliCompleted OnComplete);
 	int32 Verify(const FProsettaSyncProfile& Profile, FProsettaCliCompleted OnComplete);
-	int32 Sync(const FProsettaSyncProfile& Profile, FProsettaCliCompleted OnComplete, FProsettaCliLine OnLine = FProsettaCliLine());
+	virtual int32 Sync(const FProsettaSyncProfile& Profile, FProsettaCliCompleted OnComplete, FProsettaCliLine OnLine = FProsettaCliLine());
 	/** `config set volumes <scope>` (or `config clear volumes` when empty). Local config only; no remote write. */
-	int32 ConfigSetVolumes(const FString& Scope, FProsettaCliCompleted OnComplete);
+	virtual int32 ConfigSetVolumes(const FString& Scope, FProsettaCliCompleted OnComplete);
 	/** `init --base-url … --project-id … --token-stdin`: writes the ignored local config. The secret is wiped after launch. */
 	int32 Init(const FString& BaseUrl, const FString& ProjectId, FString Secret, FProsettaCliCompleted OnComplete);
 

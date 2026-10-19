@@ -355,6 +355,14 @@ void SProsettaSettingsPanel::RebuildVolumeRows()
 			]
 		];
 	}
+	if (!Specs.IsEmpty() && State.Profile.Volumes.IsEmpty())
+	{
+		VolumeRowsBox->AddSlot().AutoHeight().Padding(0, 2)
+		[
+			SNew(STextBlock).Tag(TEXT("Prosetta.ScopeWholeProject")).ColorAndOpacity(FStyleColors::AccentGray)
+			.Text(LOCTEXT("WholeProject", "Nothing ticked: syncs the whole live project (clears any scope left in local config)"))
+		];
+	}
 	if (Specs.IsEmpty())
 	{
 		VolumeRowsBox->AddSlot().AutoHeight()

@@ -83,7 +83,7 @@ bool FProsettaSyncProfile::Validate(TArray<FText>& OutErrors) const
 		OutErrors.Add(LOCTEXT("ProjectIdNumeric", "Project id must be a number."));
 	}
 	// Project-relative like the PROSETTA_SYNC_BIN export (FProsettaDashboardModule::ApplyProfileEnvironment).
-	if (!CliBinaryOverride.FilePath.IsEmpty() && !FPaths::FileExists(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), CliBinaryOverride.FilePath)))
+	if (!CliBinaryOverride.FilePath.IsEmpty() && !FPaths::FileExists(FPaths::ConvertRelativePathToFull(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()), CliBinaryOverride.FilePath)))
 	{
 		OutErrors.Add(FText::Format(LOCTEXT("CliMissing", "CLI binary not found: {0}"), FText::FromString(CliBinaryOverride.FilePath)));
 	}

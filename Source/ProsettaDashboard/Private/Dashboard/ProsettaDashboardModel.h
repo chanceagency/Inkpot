@@ -67,6 +67,8 @@ struct PROSETTADASHBOARD_API FProsettaCredentialsSummary
 	FString ConfigVolumes;
 	bool bCliAvailable = false;
 	FString CliCommand;
+	/** Per-file notices from the wrapper's report, e.g. a token file readable by other users. */
+	TArray<FString> Warnings;
 	bool HasCredentials() const { return Source != TEXT("none") && !Source.IsEmpty(); }
 	/** "Connected as <owner> to <project> (<baseUrl>) via <source>". */
 	FString Describe() const;
@@ -291,6 +293,8 @@ private:
 	void ContinueSwitchVolume(const FString& Slug, const FString& Tag, bool bRepoint, bool bRestartWatch);
 	void FinishSwitchVolume(const FString& Slug, const FString& Tag, bool bRepoint, bool bRestartWatch);
 	void HandleSyncResult(const FProsettaCliResult& Result, bool bWasVolumeSwitch);
+	/** `config set|clear volumes` through the wrapper (local config only); Done gets an empty string on success. */
+	void ApplyConfigScope(const FString& Scope, TFunction<void(const FString& Error)> Done);
 	void AddChangesFromSyncLines(const TArray<TSharedPtr<FJsonObject>>& Objects);
 	bool DoReload();
 	/** Has Poll start the watch once the stopped CLI is gone, giving up after WatchRestartTimeoutSeconds. */

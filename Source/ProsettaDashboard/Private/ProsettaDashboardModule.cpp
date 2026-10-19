@@ -86,7 +86,7 @@ void FProsettaDashboardModule::ApplyProfileEnvironment(const FProsettaSyncProfil
 {
 	// The wrapper honours PROSETTA_SYNC_BIN; the profile may pin a CLI build without touching config.
 	// A relative override is project-relative (profiles are committed); no override keeps the inherited value.
-	const FString Bin = Profile.CliBinaryOverride.FilePath.IsEmpty() ? InheritedSyncBin : FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), Profile.CliBinaryOverride.FilePath);
+	const FString Bin = Profile.CliBinaryOverride.FilePath.IsEmpty() ? InheritedSyncBin : FPaths::ConvertRelativePathToFull(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()), Profile.CliBinaryOverride.FilePath);
 	FPlatformMisc::SetEnvironmentVar(TEXT("PROSETTA_SYNC_BIN"), *Bin);
 }
 

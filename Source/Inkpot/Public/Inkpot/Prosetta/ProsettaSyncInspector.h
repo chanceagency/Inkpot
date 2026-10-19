@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 #include "ProsettaSyncInspector.generated.h"
 
 /** One manifest artifact: enough to show what is cached and its content hash. */
