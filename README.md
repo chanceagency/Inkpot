@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.48.24** of the plugin.</br>
+This is version **1.49.24** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta Dashboard
@@ -52,7 +52,9 @@ For general support and chat with other users, check out [Inkle's discord](https
 
 ## Changelog  
 
-### Prosetta Dashboard: empty volume scope (unreleased, follows 1.48.24)
+### Prosetta-specific changes (1.49.24)
+The dashboard now runs the presentation importer installed with `FProsettaDashboardModule::SetPresentationImporter` once per accepted generation, not only on Rebuild. Accepts and Rebuild requests coalesce into one rebuild and one import; the profile's *Import On Accept* and the presence of an importer still gate it, and commandlets never start the subsystem. A project that imported presentation from its own `UProsettaWatchSubsystem::OnGenerationAccepted` handler should drop that handler, or the import runs twice. Covered by `Inkpot.Prosetta.Dashboard.Model.AcceptedGenerationImportsPresentationOnce`.<br>
+`Inkpot.Prosetta.Dashboard.RePoint.StorySourceHost` no longer fails in a project that names its own Story Source Host Class in **Project Settings > Prosetta Sync**; it clears the setting for its duration.<br>
 An empty volume scope in a Prosetta Dashboard profile now means the whole live project, as `FProsettaSyncProfile::Volumes` documents. Sync once skipped writing an empty scope, so after switching to a volume and unticking it, Sync still pulled that volume from the CLI's local config. Sync once and Start watch now run `config clear volumes` first when the config still holds a scope, and refuse to continue if the clear fails (an unchanged scope writes nothing). The default volume is not substituted: unscoped pulls are the documented all-project path, while naming the default volume is an explicit scope with a separate cache. A watch auto-started at editor launch still follows the local config; start it from the dashboard to apply an empty scope. `FProsettaCliRunner::Sync` and `ConfigSetVolumes` are now virtual so the model can be tested with a recording runner. Covered by `Inkpot.Prosetta.Dashboard.Model.EmptyScopeClearsConfigOnSync` and `...EmptyScopeClearsConfigBeforeWatch`.<br>
 
 ### Prosetta-specific changes (1.48.24)
