@@ -188,6 +188,38 @@ python3 Plugins/Inkpot/Scripts/prosetta.py watch
 with a story import commandlet, `Scripts/prosetta-relay.py`). The plugin does not
 ship these helpers, and the commands say so when a helper is missing.
 
+## Where credentials come from
+
+There is one credential-source report: `prosetta.py credentials --json`
+(`describe_credentials`). The dashboard's model parses it and nothing else.
+There is no C++ scan of credential files.
+
+The report is produced by the wrapper rather than by `prosetta-sync` because:
+
+- Most of the layers are the wrapper's, not the CLI's: `PROSETTA_PROJECT_TOKEN`
+  with `PROSETTA_BASE_URL`/`PROSETTA_PROJECT_ID`, the project's
+  `.prosetta-sync/config.json`, the legacy `Saved/ProsettaSync` config and
+  `~/.prosetta-sync/config.json`. The CLI knows only its own user config.
+- The first-run checklist must work before a CLI exists. The report needs Python
+  but not the CLI, and says `cli.available: false` when there is none.
+- `prosetta-sync whoami` (the CLI's only identity command) needs a token and a
+  network round trip, so it cannot say where a token would come from.
+
+The one layer the CLI defines is its user config, resolved by
+`Prosetta.SyncTool` `ConfigService.ResolveConfigPath` as .NET
+`ApplicationData/Prosetta/SyncTool/config.json`. The wrapper's
+`native_config_paths` mirrors that and is covered by a per-platform test:
+
+| Platform | CLI user config |
+| --- | --- |
+| macOS | `~/Library/Application Support/Prosetta/SyncTool/config.json` |
+| Windows | `%APPDATA%\Prosetta\SyncTool\config.json` (Roaming; never `%LOCALAPPDATA%`) |
+| Linux | `$XDG_CONFIG_HOME` or `~/.config`, then `Prosetta/SyncTool/config.json` |
+
+If the CLI later offers an offline credentials report, the wrapper should
+delegate that native layer to it and keep the other layers; the report's JSON
+shape (`schemaVersion` 1) would not change for the dashboard.
+
 ## Security
 
 - Tokens live only in ignored config (`.prosetta-sync/config.json`,
@@ -195,8 +227,9 @@ ship these helpers, and the commands say so when a helper is missing.
   `PROSETTA_PROJECT_TOKEN`. They never go in `.uproject`, `Config/`, profiles,
   editor settings or logs. A profile that contains a token-like key is refused
   on load.
-- C++ never reads a credential file. Credential presence comes from
-  `prosetta.py credentials --json`.
+- C++ never reads a credential file and does not scan for them. Credential
+  presence comes only from `prosetta.py credentials --json` (see
+  [Where credentials come from](#where-credentials-come-from)).
 - The dashboard never writes to Prosetta: no `POST`/`PATCH`/`PUT`/`DELETE`, no
   side-effecting `watch-import`, no release builds.
 

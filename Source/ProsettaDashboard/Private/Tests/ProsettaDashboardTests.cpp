@@ -1,11 +1,10 @@
 // Prosetta Dashboard editor tests. Everything here runs offline: the model gets no CLI runner,
-// widgets get a fake model, and the credential scan is pointed at a transient directory.
+// and widgets get a fake model.
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "ProsettaSyncProfile.h"
 #include "ProsettaProfileStore.h"
 #include "ProsettaDashboardSettings.h"
-#include "ProsettaCredentialScan.h"
 #include "ProsettaCliRunner.h"
 #include "ProsettaPython.h"
 #include "ProsettaStoryAssetBuild.h"
@@ -37,9 +36,6 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/Layout/SBox.h"
 #include "Styling/StyleColors.h"
-#if PLATFORM_MAC || PLATFORM_LINUX
-#include <sys/stat.h>
-#endif
 
 #define DASHBOARD_TEST(Class, Name) IMPLEMENT_SIMPLE_AUTOMATION_TEST(Class, "Inkpot.Prosetta.Dashboard." Name, EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -434,67 +430,6 @@ bool FProsettaDashboardRecentConnectionsTest::RunTest(const FString&)
 	return true;
 }
 
-// ------------------------------------------------------------------ credential scan
-
-DASHBOARD_TEST(FProsettaDashboardCredentialScanTest, "CredentialScan.SourceOrder")
-bool FProsettaDashboardCredentialScanTest::RunTest(const FString&)
-{
-	const FString Root = TransientDir(TEXT("CredentialScan"));
-	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*Root, false, true); };
-	const FString ProjectDir = Root / TEXT("Project");
-	const FString HomeDir = Root / TEXT("Home");
-	TMap<FString, FString> Env;
-
-	FProsettaCredentialScan Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("nothing -> none"), Scan.Source, FString(TEXT("none")));
-	TestFalse(TEXT("HasAny false"), Scan.HasAny());
-	TestEqual(TEXT("five candidates"), Scan.Candidates.Num(), 5);
-	TestEqual(TEXT("env first"), Scan.Candidates[0].Kind, FString(TEXT("env")));
-	TestEqual(TEXT("native last"), Scan.Candidates.Last().Kind, FString(TEXT("native")));
-	TestTrue(TEXT("native under ~/.config"), Scan.Candidates.Last().Path.Contains(TEXT(".config")));
-
-	// Native config via XDG_CONFIG_HOME.
-	const FString Xdg = Root / TEXT("xdg");
-	Env.Add(TEXT("XDG_CONFIG_HOME"), Xdg);
-	FFileHelper::SaveStringToFile(TEXT("{}"), *(Xdg / TEXT("Prosetta") / TEXT("SyncTool") / TEXT("config.json")));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("native found"), Scan.Source, FString(TEXT("native")));
-
-	FFileHelper::SaveStringToFile(TEXT("{}"), *(HomeDir / TEXT(".prosetta-sync") / TEXT("config.json")));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("home beats native"), Scan.Source, FString(TEXT("home")));
-
-	const FString LocalConfig = ProjectDir / TEXT(".prosetta-sync") / TEXT("config.json");
-	FFileHelper::SaveStringToFile(TEXT("{}"), *LocalConfig);
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("local beats home"), Scan.Source, FString(TEXT("local")));
-
-	Env.Add(TEXT("PROSETTA_PROJECT_TOKEN"), TEXT("placeholder-not-a-real-token"));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("env beats local"), Scan.Source, FString(TEXT("env")));
-	TestFalse(TEXT("describe never echoes the value"), Scan.Describe().Contains(TEXT("placeholder-not-a-real-token")));
-	Env.Add(TEXT("PROSETTA_PROJECT_TOKEN"), TEXT(""));
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	TestEqual(TEXT("empty env ignored"), Scan.Source, FString(TEXT("local")));
-
-#if PLATFORM_MAC || PLATFORM_LINUX
-	chmod(TCHAR_TO_UTF8(*LocalConfig), 0644);
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	const FProsettaCredentialCandidate* Local = Scan.Candidates.FindByPredicate([&](const FProsettaCredentialCandidate& C) { return C.Path == LocalConfig; });
-	TestNotNull(TEXT("local candidate present"), Local);
-	if (Local)
-	{
-		TestTrue(TEXT("0644 is world readable"), Local->bWorldReadable);
-		TestTrue(TEXT("warning suggests chmod"), Local->Warning.Contains(TEXT("chmod")));
-	}
-	chmod(TCHAR_TO_UTF8(*LocalConfig), 0600);
-	Scan = ScanProsettaCredentialSources(ProjectDir, HomeDir, Env);
-	Local = Scan.Candidates.FindByPredicate([&](const FProsettaCredentialCandidate& C) { return C.Path == LocalConfig; });
-	TestTrue(TEXT("0600 is private"), Local && !Local->bWorldReadable);
-#endif
-	return true;
-}
-
 // ------------------------------------------------------------------ CLI runner
 
 DASHBOARD_TEST(FProsettaDashboardCliCommandLineTest, "CliRunner.CommandLine")
@@ -721,6 +656,15 @@ bool FProsettaDashboardModelParseTest::RunTest(const FString&)
 	TestFalse(TEXT("no credentials"), None.HasCredentials());
 	TestFalse(TEXT("cli missing"), None.bCliAvailable);
 	TestFalse(TEXT("null report refused"), FProsettaDashboardModel::ParseCredentialsReport(nullptr, None));
+
+	// The wrapper's report (prosetta.py describe_credentials) is the only credential-source report, and it
+	// carries file facts, never a token. Even a report that wrongly carried one must not reach the summary.
+	FProsettaCredentialsSummary Leaky;
+	TestTrue(TEXT("report with candidates and a stray token parses"), FProsettaDashboardModel::ParseCredentialsReport(ParseJsonObject(
+		TEXT(R"({"schemaVersion":1,"source":"native","token":"must-not-leak","candidates":[{"kind":"native","path":"/n/config.json","exists":true,"hasToken":true,"mode":"600","warning":null}],"cli":{"available":false,"command":"dotnet"}})")), Leaky));
+	TestEqual(TEXT("native source kept"), Leaky.Source, FString(TEXT("native")));
+	TestTrue(TEXT("native counts as credentials"), Leaky.HasCredentials());
+	TestFalse(TEXT("summary never echoes a token"), Leaky.Describe().Contains(TEXT("must-not-leak")));
 
 	FString Owner, Project;
 	FProsettaDashboardModel::ParseWhoami(ParseJsonObject(TEXT(R"({"user":{"email":"dev@example.invalid"},"project":{"name":"Sample","identifier":"sample"}})")), Owner, Project);
