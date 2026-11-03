@@ -47,7 +47,7 @@ namespace Ink
 		virtual ~FObject();
 
 		template<typename T>
-		static TSharedPtr<T> DynamicCastTo(TSharedPtr<FObject> Object);
+		static TSharedPtr<T> DynamicCastTo(const TSharedPtr<FObject>& Object);
 		virtual FString ToString();
 		virtual int32 GetHashCode();
 		
@@ -84,8 +84,9 @@ namespace Ink
 	};
 
 	template <typename T>
-	TSharedPtr<T> FObject::DynamicCastTo(TSharedPtr<Ink::FObject> Object)
+	TSharedPtr<T> FObject::DynamicCastTo(const TSharedPtr<Ink::FObject>& Object)
 	{
+		// By reference: this runs several times per story step, and a by-value pointer costs a refcount round trip.
 		if (Object.IsValid() && Object->CanCastTo(T::GetInkObjectClass()))
 			return StaticCastSharedPtr<T>(Object);
 		else

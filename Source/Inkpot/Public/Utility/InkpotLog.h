@@ -5,5 +5,7 @@
 INKPOT_API DECLARE_LOG_CATEGORY_EXTERN(Inkpot, Log, All);
 
 #define INKPOT_LOG( msg, ... )   {if(FInkpotCVars::bDebugLog) UE_LOG( Inkpot, Display, TEXT( msg ), ##__VA_ARGS__ );}
+/** True when INKPOT_LOG output would be written; gate debug-only string building on it. Constant false under NO_LOGGING. */
+#define INKPOT_LOG_ACTIVE()      (FInkpotCVars::bDebugLog && UE_LOG_ACTIVE( Inkpot, Display ))
 #define INKPOT_WARN( msg, ... )  UE_LOG( Inkpot, Warning, TEXT( msg ), ##__VA_ARGS__ )
 #define INKPOT_ERROR( msg, ... ) UE_LOG( Inkpot, Error,   TEXT( msg ), ##__VA_ARGS__ )

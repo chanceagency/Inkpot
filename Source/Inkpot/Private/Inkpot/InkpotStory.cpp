@@ -223,7 +223,7 @@ FString UInkpotStory::ContinueIfYouCan(bool& Continued)
 
 FString UInkpotStory::ContinueInternal()
 {
-	if (IsLineRenderingForFlow(GetCurrentFlowName()))
+	if (IsLineRenderingForCurrentFlow())
 	{
 		INKPOT_WARN("Continue ignored while a line is rendering for flow '%s'", *GetCurrentFlowName());
 		return GetCurrentText();
@@ -241,7 +241,7 @@ FString UInkpotStory::ContinueMaximally()
 
 FString UInkpotStory::ContinueMaximallyInternal()
 {
-	if (IsLineRenderingForFlow(GetCurrentFlowName()))
+	if (IsLineRenderingForCurrentFlow())
 	{
 		INKPOT_WARN("ContinueMaximally ignored while a line is rendering for flow '%s'", *GetCurrentFlowName());
 		return GetCurrentText();
@@ -273,7 +273,7 @@ bool UInkpotStory::CanContinue()
 
 bool UInkpotStory::CanContinueInternal()
 {
-	if (IsLineRenderingForFlow(GetCurrentFlowName()))
+	if (IsLineRenderingForCurrentFlow())
 		return false;
 	return StoryInternal->CanContinue();
 }
@@ -290,13 +290,15 @@ const TArray<UInkpotChoice*>& UInkpotStory::GetCurrentChoices()
 
 void UInkpotStory::UpdateChoices()
 {
-	Choices.Empty();
+	// Reset keeps the allocation: choices are rebuilt after every Continue and ChoosePath.
+	Choices.Reset();
 
 	if(!StoryInternal->HasChoices())
 		return;
 
-	TArray<TSharedPtr<Ink::FChoice>> inkChoices =  StoryInternal->GetCurrentChoices();
-	for( auto inkChoice : inkChoices  )
+	const TArray<TSharedPtr<Ink::FChoice>> inkChoices = StoryInternal->GetCurrentChoices();
+	Choices.Reserve( inkChoices.Num() );
+	for( const TSharedPtr<Ink::FChoice>& inkChoice : inkChoices )
 	{
 		UInkpotChoice* choice = NewObject<UInkpotChoice>( this );
 		choice->Initialise( inkChoice );
@@ -721,6 +723,9 @@ void UInkpotStory::OnChoosePathStringInternal(const FString& InPath, const TArra
 
 void UInkpotStory::DumpDebug()
 {
+	// Runs on every Continue; skip gathering flows, tags and every variable's value when nothing is logged.
+	if (!INKPOT_LOG_ACTIVE())
+		return;
 	FString currentFlow = GetCurrentFlowName();
 	INKPOT_LOG("Flow         : %s", *currentFlow);
 
@@ -730,7 +735,7 @@ void UInkpotStory::DumpDebug()
 		if ( flows.Num() > 0 )
 		{
 			FString flowsAlive;
-			for ( auto flow : flows )
+			for ( const FString& flow : flows )
 			{
 				flowsAlive.Append( flow );
 				flowsAlive.Append( ", " );
@@ -746,7 +751,7 @@ void UInkpotStory::DumpDebug()
 	if( tags.Num() > 0 )
 	{
 		FString tagsSet;
-		for( auto tag : tags )
+		for( const FString& tag : tags )
 		{
 			tagsSet.Append( "'#" );
 			tagsSet.Append( tag );
@@ -759,7 +764,7 @@ void UInkpotStory::DumpDebug()
 	if( gtags.Num() > 0 )
 	{
 		FString tagsSet;
-		for( auto tag : gtags )
+		for( const FString& tag : gtags )
 		{
 			tagsSet.Append( "'#" );
 			tagsSet.Append( tag );
@@ -792,7 +797,7 @@ void UInkpotStory::DumpDebug()
 		for( int32 i=0; i<Choices.Num(); ++i )
 		{
 			FString tagsSet;
-			for( auto tag : Choices[i]->GetTags() )
+			for( const FString& tag : Choices[i]->GetTags() )
 			{
 				tagsSet.Append( "'#" );
 				tagsSet.Append( tag );
@@ -812,7 +817,7 @@ void UInkpotStory::DumpDebug()
 
 void UInkpotStory::DumpDebug(UInkpotChoice *InChoice)
 {
-	if(!InChoice)
+	if(!InChoice || !INKPOT_LOG_ACTIVE())
 		return;
 	INKPOT_LOG("Chose        : %d - %s", InChoice->GetIndex(), *InChoice->GetString());
 }
@@ -1763,6 +1768,12 @@ void UInkpotStory::NotifyLineRenderEnd(FName InContext, bool bInSuccess)
 bool UInkpotStory::IsLineRendering() const
 {
 	return LineRenderContextsInFlight.Num() > 0;
+}
+
+bool UInkpotStory::IsLineRenderingForCurrentFlow()
+{
+	// Nothing in flight is the common case; skip copying the current flow name.
+	return LineRenderContextsInFlight.Num() > 0 && IsLineRenderingForFlow(GetCurrentFlowName());
 }
 
 bool UInkpotStory::IsLineRenderingForFlow(const FString& InFlowName) const

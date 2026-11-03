@@ -1132,6 +1132,8 @@ protected:
 	// line render ends if one is still in progress.
 	void NotifyFlowEndedOrDefer(const FString& FlowName);
 	void BroadcastFlowEnded(const FString& FlowName);
+	// IsLineRenderingForFlow( GetCurrentFlowName() ), without the flow-name copy when nothing is rendering.
+	bool IsLineRenderingForCurrentFlow();
 
 	void DumpDebug(UInkpotChoice *Choice);
 	
