@@ -1,5 +1,6 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
 #include "Prosetta/UI/ProsettaReticuleWidget.h"
 #include "Engine/World.h"
 #include "Widgets/SVirtualWindow.h"
@@ -13,23 +14,33 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaReticulePaintTest, "Inkpot.Prosetta.Re
 bool FProsettaReticulePaintTest::RunTest(const FString& Parameters)
 {
     UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    TSharedPtr<SVirtualWindow> Window;
+    ON_SCOPE_EXIT
+    {
+        if (Window) { Window->SetContent(SNullWidget::NullWidget); }
+        World->DestroyWorld(false);
+    };
     auto* Widget = CreateWidget<UProsettaReticuleWidget>(World, UProsettaReticuleWidget::StaticClass());
-    if (!TestNotNull(TEXT("radial widget"), Widget)) { World->DestroyWorld(false); return false; }
+    if (!TestNotNull(TEXT("radial widget"), Widget)) { return false; }
     Widget->Diameter = 40.f;
     Widget->Thickness = 4.f;
-    auto Window = SNew(SVirtualWindow);
+    Window = SNew(SVirtualWindow);
     Window->SetContent(Widget->TakeWidget());
     Window->Resize(FVector2D(640, 360));
     Window->SlatePrepass(1.f);
+    auto Paint = [&Window](FSlateWindowElementList& Elements, float Scale)
+    {
+        auto& Grid = Window->GetHittestGrid();
+        Grid.Clear(); Grid.SetHittestArea(FVector2D::ZeroVector, FVector2D(640, 360));
+        Window->Paint(FPaintArgs(nullptr, Grid, FVector2D::ZeroVector, FPlatformTime::Seconds(), 0.f),
+            FGeometry::MakeRoot(FVector2D(640, 360) / Scale, FSlateLayoutTransform(Scale)), FSlateRect(0, 0, 640, 360),
+            Elements, 0, FWidgetStyle(), true);
+    };
     for (float Progress : {0.f, 0.25f, 0.5f, 1.f})
     {
         Widget->Progress = Progress;
-        auto& Grid = Window->GetHittestGrid();
-        Grid.Clear(); Grid.SetHittestArea(FVector2D::ZeroVector, FVector2D(640, 360));
         FSlateWindowElementList Elements(Window);
-        Window->Paint(FPaintArgs(nullptr, Grid, FVector2D::ZeroVector, FPlatformTime::Seconds(), 0.f),
-            FGeometry::MakeRoot(FVector2D(640, 360), FSlateLayoutTransform()), FSlateRect(0, 0, 640, 360),
-            Elements, 0, FWidgetStyle(), true);
+        Paint(Elements, 1.f);
         const auto& Lines = Elements.GetUncachedDrawElements().Get<(uint8)EElementType::ET_Line>();
         TestEqual(TEXT("base and progress arcs"), Lines.Num(), Progress > 0 && Progress < 1 ? 2 : 1);
         if (!Lines.IsEmpty())
@@ -47,8 +58,16 @@ bool FProsettaReticulePaintTest::RunTest(const FString& Parameters)
                 FVector2f(320 + 18 * FMath::Cos(Angle), 180 + 18 * FMath::Sin(Angle)), 0.01f));
         }
     }
-    Window->SetContent(SNullWidget::NullWidget);
-    World->DestroyWorld(false);
+    // Points stay in local units under DPI scaling, so the pixel thickness must scale with them.
+    Widget->Progress = 0.f;
+    FSlateWindowElementList Scaled(Window);
+    Paint(Scaled, 2.f);
+    const auto& ScaledLines = Scaled.GetUncachedDrawElements().Get<(uint8)EElementType::ET_Line>();
+    if (TestEqual(TEXT("scaled base arc"), ScaledLines.Num(), 1))
+    {
+        TestEqual(TEXT("DPI-scaled thickness"), ScaledLines[0].GetThickness(), 8.f);
+        TestTrue(TEXT("local-unit radius"), ScaledLines[0].GetPoints()[0].Equals(FVector2f(160, 72), 0.01f));
+    }
     return true;
 }
 #endif
