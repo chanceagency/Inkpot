@@ -18,6 +18,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "PackageTools.h"
 #include "UObject/UObjectIterator.h"
+#include <atomic>
 
 namespace
 {
@@ -67,7 +68,7 @@ namespace
   FString Event;
   FString Namespace;
  };
- FFixture Generation(const FString& Scope, const FString& Revision, const FString& Channel, bool Audio = true, bool Corrupt = false, const FString& AudioPath = TEXT("audio/take1.wav"), bool EmptyAudio = false)
+ FFixture Generation(const FString& Scope, const FString& Revision, const FString& Channel, bool Audio = true, bool Corrupt = false, const FString& AudioPath = TEXT("audio/take1.wav"), bool EmptyAudio = false, bool CorruptSecondTake = false)
  {
   FFixture result;
   const FString id = SHAString(Scope + Revision + Channel);
@@ -110,6 +111,7 @@ namespace
    wav.AddZeroed(1600);
    wav[44] = static_cast<uint8>(FCString::Atoi(*Revision));
    add(TEXT("audio-file:take1"), AudioPath, EmptyAudio ? TArray<uint8>() : wav, TEXT("binary"));
+   if (CorruptSecondTake) add(TEXT("audio-file:take2"), TEXT("audio/take2.wav"), wav, TEXT("binary"));
   }
   auto provenance = MakeShared<FJsonObject>();
   provenance->SetStringField(TEXT("id"), id);
@@ -123,6 +125,7 @@ namespace
   manifest->SetArrayField(TEXT("artifacts"), artifacts);
   FFileHelper::SaveStringToFile(Json(manifest), *(result.Root / TEXT("manifest.json")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
   if (Corrupt) FFileHelper::SaveStringToFile(TEXT("corrupt"), *(result.Root / TEXT("compiled/story.json")));
+  if (CorruptSecondTake) FFileHelper::SaveStringToFile(TEXT("corrupt"), *(result.Root / TEXT("audio/take2.wav")));
   auto event = MakeShared<FJsonObject>();
   event->SetNumberField(TEXT("schemaVersion"), 1);
   event->SetStringField(TEXT("type"), TEXT("generation-completed"));
@@ -137,6 +140,17 @@ namespace
   result.Event = Json(event);
   return result;
  }
+ // Counts log lines containing Needle as they are written, on any thread.
+ struct FLogCounter : FOutputDevice
+ {
+  explicit FLogCounter(const TCHAR* InNeedle) : Needle(InNeedle) { GLog->AddOutputDevice(this); }
+  virtual ~FLogCounter() override { GLog->RemoveOutputDevice(this); }
+  virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
+  virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type, const FName&) override { if (FCString::Strifind(Message, *Needle)) ++Count; }
+  int32 Num() { GLog->Flush(); return Count.load(); }
+  FString Needle;
+  std::atomic<int32> Count{0};
+ };
  UProsettaGenerationAsset* State(const FFixture& Fixture)
  {
   return LoadObject<UProsettaGenerationAsset>(nullptr, *(TEXT("/Game/Prosetta/") + Fixture.Namespace + TEXT("/Generation.Generation")));
@@ -458,10 +472,24 @@ bool FProsettaWatchEmptyAudioTest::RunTest(const FString&)
  TestTrue(TEXT("replacement voiced generation applies"), watch->TryApplyPending());
  TestNotNull(TEXT("voice restored on same wrapper"), audio->Audio.Get());
  TestEqual(TEXT("restored artifact identity"), state->Assets.FindRef(TEXT("audio-file:take1")).Get(), static_cast<UObject*>(audio));
- const FFixture corrupt = Generation(scope, TEXT("4"), TEXT("live"), true, true, TEXT("audio/take1.mp3"), true);
+ {
+  // The empty take is read before the corrupt second take fails the generation.
+  FLogCounter unvoicedLog(TEXT("imported as unvoiced"));
+  const FFixture rejected = Generation(scope, TEXT("4"), TEXT("live"), true, false, TEXT("audio/take1.mp3"), true, true);
+  cleanup.Track(rejected);
+  watch->ConsumeEvent(rejected.Event);
+  TestFalse(TEXT("generation with a corrupt later take is rejected"), watch->TryApplyPending());
+  TestEqual(TEXT("rejected for the later take"), watch->GetStatus(), FString(TEXT("Import failed; previous generation retained: Artifact checksum/size mismatch: audio-file:take2")));
+  TestEqual(TEXT("no unvoiced warning for an uncommitted generation"), unvoicedLog.Num(), 0);
+  TestNotNull(TEXT("voiced take retained"), audio->Audio.Get());
+ }
+ const FFixture corrupt = Generation(scope, TEXT("5"), TEXT("live"), true, false, TEXT("audio/take1.mp3"), true);
  cleanup.Track(corrupt);
+ // Nonzero bytes where the manifest promised an empty take.
+ FFileHelper::SaveStringToFile(TEXT("corrupt"), *(corrupt.Root / TEXT("audio/take1.mp3")));
  watch->ConsumeEvent(corrupt.Event);
  TestFalse(TEXT("empty media does not bypass integrity checks"), watch->TryApplyPending());
+ TestEqual(TEXT("rejected for the empty take itself"), watch->GetStatus(), FString(TEXT("Import failed; previous generation retained: Artifact checksum/size mismatch: audio-file:take1")));
  TestTrue(TEXT("prior voiced generation retained on integrity failure"), story->GetCompiledJSON().Contains(TEXT("Generation 3")));
  return true;
 }

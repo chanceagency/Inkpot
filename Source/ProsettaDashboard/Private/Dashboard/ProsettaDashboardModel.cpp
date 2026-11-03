@@ -1,6 +1,7 @@
 #include "ProsettaDashboardModel.h"
 #include "ProsettaCliRunner.h"
 #include "ProsettaProfileStore.h"
+#include "Inkpot/Prosetta/ProsettaStorySource.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
@@ -898,9 +899,7 @@ void FProsettaDashboardModel::RefreshVolumes()
 		}
 		else
 		{
-			Self->Fail(TEXT("volumes failed: ") + (Result.UserError.IsEmpty()
-				? (Result.Notices.IsEmpty() ? FString(TEXT("CLI returned no JSON object.")) : Result.Notices.Last())
-				: Result.UserError));
+			Self->Fail(TEXT("volumes failed: ") + Result.UserError);
 		}
 		Self->ClearBusy();
 	}));
@@ -1072,7 +1071,7 @@ void FProsettaDashboardModel::OpenOutliner() { if (Deps.OpenOutliner) { Deps.Ope
 void FProsettaDashboardModel::RefreshManifest()
 {
 	FProsettaManifestSummary Manifest;
-	const FString Path = FPaths::Combine(Deps.MirrorRoot, TEXT("manifest.json"));
+	const FString Path = ProsettaStorySource::ManifestPath(Deps.MirrorRoot);
 	State.bHasManifest = UProsettaSyncInspector::LoadManifestFile(Path, Manifest);
 	State.Manifest = State.bHasManifest ? Manifest : FProsettaManifestSummary();
 	LastManifestMTime = IFileManager::Get().GetTimeStamp(*Path);

@@ -227,7 +227,7 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 	// must not rebuild this dashboard's mirror or run its presentation importer.
 	FProsettaManifestSummary Manifest;
 	if (Generation.GenerationId.IsEmpty() ||
-		!UProsettaSyncInspector::LoadManifestFile(Model->GetDeps().MirrorRoot / TEXT("manifest.json"), Manifest) ||
+		!UProsettaSyncInspector::LoadManifestFile(ProsettaStorySource::ManifestPath(Model->GetDeps().MirrorRoot), Manifest) ||
 		Manifest.GenerationId != Generation.GenerationId) { return; }
 	// A newly accepted generation is already in the mirror; our own import of it is not an "external" change.
 	bManifestChangeQueued = false;

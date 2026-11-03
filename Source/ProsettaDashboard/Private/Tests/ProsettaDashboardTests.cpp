@@ -509,6 +509,93 @@ bool FProsettaDashboardCliMultilineJsonTest::RunTest(const FString&)
  TestEqual(TEXT("interleaved notice kept out of the object"), Run.Result.Notices.Last(), FString(TEXT("Error: interleaved")));
  TestEqual(TEXT("object around the notice delivered"), Delivered, 6);
  TestTrue(TEXT("CLI number text preserved"), Run.Result.JsonLines.Last().Contains(TEXT("9007199254740993")));
+ // Unprefixed stderr at column 0 is text, and the object around it keeps accumulating.
+ Run.Pending.Request.bCaptureText = true;
+ const int32 NoticesBefore = Run.Result.Notices.Num();
+ Run.Buffer = TEXT("{\n  \"type\": \"pretty\",\nTraceback (most recent call last):\n  \"after\": 1\n}\n");
+ Runner.ConsumeBufferedOutput(Run, false);
+ TestEqual(TEXT("object around unprefixed stderr delivered"), Delivered, 7);
+ TestEqual(TEXT("unprefixed stderr routed as text"), Run.Result.TextLines.Last(), FString(TEXT("Traceback (most recent call last):")));
+ TestEqual(TEXT("unprefixed stderr is not a notice"), Run.Result.Notices.Num(), NoticesBefore);
+ TestEqual(TEXT("member after the stderr line kept"), Run.Result.LastObject()->GetIntegerField(TEXT("after")), 1);
+ return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardCliOutputLimitTest, "CliRunner.OutputLimit")
+bool FProsettaDashboardCliOutputLimitTest::RunTest(const FString&)
+{
+ FProsettaCliRunner Runner{FString(), FString(), FString()};
+ const int32 OverLimitChars = int32(FProsettaCliRunner::MaxOutputBytes / sizeof(TCHAR)) + 1;
+ {
+  FProsettaCliRunner::FActive Run;
+  int32 Delivered = 0;
+  Run.Pending.OnLine = FProsettaCliLine::CreateLambda([&Delivered](const TSharedPtr<FJsonObject>&) { ++Delivered; });
+  // A complete, valid compact line over the byte limit is rejected without swallowing what follows.
+  Run.Buffer = TEXT("{\"big\":\"") + FString::ChrN(OverLimitChars, TEXT('a')) + TEXT("\"}\nError: after\n{\"ok\":1}\n");
+  Runner.ConsumeBufferedOutput(Run, false);
+  TestEqual(TEXT("only the object after the oversized line delivered"), Delivered, 1);
+  TestEqual(TEXT("delivered object is the next one"), Run.Result.LastObject()->GetIntegerField(TEXT("ok")), 1);
+  TestEqual(TEXT("limit notice then the following notice"), Run.Result.Notices.Num(), 2);
+  TestEqual(TEXT("limit notice"), Run.Result.Notices[0], FString(TEXT("Error: CLI JSON output exceeded the 16 MiB limit.")));
+  TestEqual(TEXT("following notice kept"), Run.Result.Notices[1], FString(TEXT("Error: after")));
+ }
+ {
+  FProsettaCliRunner::FActive Run;
+  Run.Pending.Request.bCaptureText = true;
+  int32 Delivered = 0;
+  Run.Pending.OnLine = FProsettaCliLine::CreateLambda([&Delivered](const TSharedPtr<FJsonObject>&) { ++Delivered; });
+  // A line with no newline in sight cannot grow the buffer without bound.
+  Run.Buffer = FString::ChrN(OverLimitChars, TEXT('x'));
+  Runner.ConsumeBufferedOutput(Run, false);
+  TestEqual(TEXT("oversized buffer released"), Run.Buffer.Len(), 0);
+  TestEqual(TEXT("one notice for the oversized line"), Run.Result.Notices.Num(), 1);
+  TestEqual(TEXT("oversized line notice"), Run.Result.Notices.Last(), FString(TEXT("Error: CLI output line exceeded the 16 MiB limit.")));
+  Run.Buffer += TEXT("yyy\n{\"ok\":1}\n");
+  Runner.ConsumeBufferedOutput(Run, false);
+  TestTrue(TEXT("rest of the oversized line dropped"), Run.Result.TextLines.IsEmpty());
+  TestEqual(TEXT("no second notice for the same line"), Run.Result.Notices.Num(), 1);
+  TestEqual(TEXT("next line parsed normally"), Delivered, 1);
+ }
+ return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardCliMissingJsonObjectTest, "CliRunner.MissingJsonObject")
+bool FProsettaDashboardCliMissingJsonObjectTest::RunTest(const FString&)
+{
+ FProsettaCliRequest Request;
+ Request.Command = TEXT("volumes");
+ Request.bRequiresJsonObject = true;
+ FProsettaCliResult Result;
+ Result.bLaunched = true;
+ Result.ExitCode = 0;
+ FProsettaCliRunner::DescribeFailure(Request, Result);
+ TestFalse(TEXT("clean exit without the owed object fails"), Result.Succeeded());
+ TestEqual(TEXT("fallback message"), Result.UserError, FString(TEXT("CLI returned no JSON object.")));
+
+ FProsettaCliResult Noticed;
+ Noticed.bLaunched = true;
+ Noticed.ExitCode = 0;
+ Noticed.Notices.Add(TEXT("Warning: no volumes configured"));
+ FProsettaCliRunner::DescribeFailure(Request, Noticed);
+ TestFalse(TEXT("notice does not make it a success"), Noticed.Succeeded());
+ TestEqual(TEXT("last notice explains it"), Noticed.UserError, FString(TEXT("Warning: no volumes configured")));
+
+ FProsettaCliResult WithObject;
+ WithObject.bLaunched = true;
+ WithObject.ExitCode = 0;
+ WithObject.JsonObjects.Add(MakeShared<FJsonObject>());
+ WithObject.UserError = TEXT("stale");
+ FProsettaCliRunner::DescribeFailure(Request, WithObject);
+ TestTrue(TEXT("object present succeeds"), WithObject.Succeeded());
+ TestEqual(TEXT("success clears the error"), WithObject.UserError, FString());
+
+ FProsettaCliRequest TextOnly;
+ TextOnly.Command = TEXT("version");
+ FProsettaCliResult Text;
+ Text.bLaunched = true;
+ Text.ExitCode = 0;
+ FProsettaCliRunner::DescribeFailure(TextOnly, Text);
+ TestTrue(TEXT("text-only request needs no object"), Text.Succeeded());
  return true;
 }
 

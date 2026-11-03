@@ -449,7 +449,8 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  TSet<FString> keys;
  FString metadata;
 
- int32 unvoiced = 0;
+ // Logged only once the generation commits; a later failure leaves the prior take in place.
+ TArray<TPair<FString, FString>> unvoiced;
  for (const auto& value : *artifacts)
  {
   const TSharedPtr<FJsonObject>* artifact = nullptr;
@@ -524,8 +525,7 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
     // Some providers return no samples for punctuation-only lines. Keep the verified
     // artifact identity with no SoundWave, clearing any prior take rather than stalling
     // the whole story or inventing audio. The mirror and selected take stay untouched.
-    UE_LOG(LogProsettaWatchImport, Warning, TEXT("Selected audio %s (%s) is empty; imported as unvoiced."), *candidate.Key, *relative);
-    ++unvoiced;
+    unvoiced.Emplace(candidate.Key, relative);
    }
    else
    {
@@ -709,8 +709,10 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  // in an editor-only retirement map, preserving user references until explicit cleanup.
  NativeGenerationPaths.Add(name, root);
  OutAccepted = state;
+ for (const TPair<FString, FString>& take : unvoiced)
+  UE_LOG(LogProsettaWatchImport, Warning, TEXT("Selected audio %s (%s) is empty; imported as unvoiced."), *take.Key, *take.Value);
  // TryApplyPending appends this notice to the applied-generation status, so the silent take shows in Watch Status.
- if (unvoiced > 0) Status = FString::Printf(TEXT("Imported %d empty selected audio %s as unvoiced."), unvoiced, unvoiced == 1 ? TEXT("take") : TEXT("takes"));
+ if (!unvoiced.IsEmpty()) Status = FString::Printf(TEXT("Imported %d empty selected audio %s as unvoiced."), unvoiced.Num(), unvoiced.Num() == 1 ? TEXT("take") : TEXT("takes"));
  return true;
 }
 
