@@ -521,3 +521,17 @@ It then launches a fresh editor process to reload saved localization/audio and
 verify unreferenced packages remain absent and saved user references remain intact.
 This is editor fixture evidence; a human project pilot, Windows validation, and a
 cooked game/audio acceptance run are still required before milestone acceptance.
+
+### Optional Prosetta radial UI
+
+`UProsettaReticuleWidget` (`Prosetta/UI/ProsettaReticuleWidget.h`) is a native,
+hit-test-transparent UMG widget. It paints a semi-opaque circle at the center of
+its allotted area; use a full-screen slot for a viewport reticule. Set `Diameter`
+in DPI-scaled Slate units, `Thickness` (half the diameter makes a filled circle),
+`BaseColor`, `ProgressColor`, and `Progress` (0–1). Progress sweeps clockwise from
+twelve o'clock. The host supplies target and hold progress; the widget has no
+input, trace, or story dependency. The InkpotSandbox `ProsettaReticuleComponent`
+is an optional pawn adapter for the synced event protocol.
+
+`Inkpot.Prosetta.Reticule.Paint` exercises the real Slate paint path, center,
+size, thickness, and clockwise progress.
