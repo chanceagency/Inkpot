@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.50.24** of the plugin.</br>
+This is version **1.51.24** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta Dashboard
@@ -51,6 +51,9 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.51.24)
+The Inkpot runtime adds `UProsettaReticuleWidget` (`Prosetta/UI/ProsettaReticuleWidget.h`), an optional hit-test-transparent UMG reticule that paints a base ring and a clockwise progress arc from `Diameter`, `Thickness`, `BaseColor`, `ProgressColor` and `Progress`. Its width scales with DPI, it honours the widget color (including a binding) and the disabled state, and it reports `Diameter` as its minimum desired size, so auto-sized slots fit it. `UMG` is now a public dependency of the `Inkpot` module. Covered by `Inkpot.Prosetta.Reticule.Paint`; see *Optional Prosetta radial UI* below.
 
 ### Prosetta-specific changes (1.50.24)
 The dashboard's volume list loads again. Current CLI commands pretty-print their JSON, which `FProsettaCliRunner` used to drop because it parsed one line at a time, so the dashboard reported `volumes failed:` after a successful exit. The runner now joins formatted objects across lines and pipe reads, keeps one-object-per-line NDJSON callbacks for Watch, and treats stderr text interleaved into an object as a notice. A malformed line no longer stalls the stream, and output is bounded at 16 MiB per line or object. Requests that owe a JSON object (`credentials`, `whoami`, `volumes`) now fail with the CLI's last notice when they print none.<br>
@@ -534,4 +537,5 @@ input, trace, or story dependency. The InkpotSandbox `ProsettaReticuleComponent`
 is an optional pawn adapter for the synced event protocol.
 
 `Inkpot.Prosetta.Reticule.Paint` exercises the real Slate paint path, center,
-size, thickness, and clockwise progress.
+size, desired size, thickness and its clamp, DPI scaling, clockwise progress,
+colors and tint, the disabled effect, and non-finite progress.
