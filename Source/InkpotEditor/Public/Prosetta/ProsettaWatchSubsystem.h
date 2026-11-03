@@ -108,6 +108,10 @@ private:
  /** Last meaningful non-NDJSON line the CLI printed ( stderr shares the pipe ), reported if it exits. See SelectDiagnostic. */
  FString LastDiagnostic;
  FString Status = TEXT("Stopped");
+ /** Covers validation, asset saves, cleanup and accepted listeners, all of which may pump editor events. */
+ bool bApplyingPending = false;
+ /** Automatic ticks wait for a quiet receipt interval; explicit Apply Pending remains immediate. */
+ double LastPendingEventTime = 0.0;
  TMap<FString, FString> Pending;
  TMap<FString, FString> NativeGenerationPaths;
 };

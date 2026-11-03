@@ -13,6 +13,8 @@
 #include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
 #include "Editor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Misc/ScopedSlowTask.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Factories/SoundFactory.h"
 #include "AssetDeleteModel.h"
@@ -304,7 +306,10 @@ bool UProsettaWatchSubsystem::Tick(float DeltaTime)
    else Status = FString::Printf(TEXT("CLI exited with code %d%s; last imported assets retained."), exitCode, *diagnostic);
   }
  }
- TryApplyPending();
+ // Coalesce bursts while the app is away or the CLI is finishing several generations.
+ // Explicit Apply Pending bypasses this quiet interval, but never the safety/re-entry checks.
+ const bool bForeground = !FSlateApplication::IsInitialized() || FSlateApplication::Get().IsActive();
+ if (bForeground && FPlatformTime::Seconds() - LastPendingEventTime >= 0.75) TryApplyPending();
  return true;
 }
 bool UProsettaWatchSubsystem::IsSafeToApply()
@@ -381,14 +386,21 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
   TSharedPtr<FJsonObject> prior;
   if (Parse(*queued, prior) && OlderRevision(event, prior)) return true;
  }
+ // Replayed receipts must not keep postponing a genuinely new pending generation.
+ if (!Pending.Contains(name) || Pending.FindRef(name) != EventJSON) LastPendingEventTime = FPlatformTime::Seconds();
  Pending.Add(name, EventJSON);
  Status = TEXT("Generation queued until Play stops and editor is idle.");
  return true;
 }
 bool UProsettaWatchSubsystem::TryApplyPending()
 {
- if (Pending.IsEmpty() || !IsSafeToApply()) return false;
+ if (bApplyingPending || Pending.IsEmpty() || !IsSafeToApply()) return false;
+ TGuardValue<bool> applying(bApplyingPending, true);
  TStrongObjectPtr<UProsettaWatchSubsystem> keepAlive(this);
+ // One window owns the entire batch, including the dashboard's accepted-generation rebuild.
+ // Nested audio factories otherwise open and close their own slow-task window for every take.
+ FScopedSlowTask progress(1.f, NSLOCTEXT("ProsettaWatch", "ImportGeneration", "Importing Prosetta generation"));
+ progress.MakeDialog();
  TArray<FString> names;
  Pending.GetKeys(names);
  for (const FString& name : names)

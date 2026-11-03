@@ -494,6 +494,54 @@ bool FProsettaWatchEmptyAudioTest::RunTest(const FString&)
  return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchReentrantApplyTest, "Inkpot.Prosetta.WatchReentrantApply",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FProsettaWatchReentrantApplyTest::RunTest(const FString&)
+{
+ const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
+ const FFixture first = Generation(scope, TEXT("1"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
+ const FFixture second = Generation(scope, TEXT("2"), TEXT("live"), false);
+ const FFixture third = Generation(scope, TEXT("3"), TEXT("live"), false);
+ cleanup.Track(first); cleanup.Track(second); cleanup.Track(third);
+ int32 resolves = 0;
+ watch->ConfigureExternalWatch([&](FString&, FString& Error)
+ {
+  if (++resolves == 1)
+  {
+   // A dialog or decoder callback can pump the editor while validation is still running.
+   watch->ConsumeEvent(second.Event);
+   TestFalse(TEXT("decoder callback cannot start an overlapping import"), watch->TryApplyPending());
+  }
+  Error = TEXT("decoder deliberately unavailable");
+  return false;
+ });
+ watch->ConsumeEvent(first.Event);
+ TestFalse(TEXT("outer decode failure is reported"), watch->TryApplyPending());
+ TestEqual(TEXT("newer event queued during failed apply survives"), watch->GetPendingCount(), 1);
+ int32 accepted = 0;
+ const FDelegateHandle handle = UProsettaWatchSubsystem::OnGenerationAccepted.AddLambda([&](const UProsettaGenerationAsset& generation)
+ {
+  if (generation.Namespace != second.Namespace) return;
+  if (++accepted == 1)
+  {
+   watch->ConsumeEvent(third.Event);
+   TestFalse(TEXT("accepted listener cannot recursively apply the next generation"), watch->TryApplyPending());
+  }
+ });
+ ON_SCOPE_EXIT { UProsettaWatchSubsystem::OnGenerationAccepted.Remove(handle); };
+ TestTrue(TEXT("retained second generation applies"), watch->TryApplyPending());
+ TestEqual(TEXT("one notification before outer apply returns"), accepted, 1);
+ TestEqual(TEXT("listener's newer generation remains queued"), watch->GetPendingCount(), 1);
+ TestTrue(TEXT("third generation applies on the next pass"), watch->TryApplyPending());
+ TestEqual(TEXT("one notification per committed generation"), accepted, 2);
+ TestEqual(TEXT("no pending generations"), watch->GetPendingCount(), 0);
+ TestFalse(TEXT("idle apply never repeats work"), watch->TryApplyPending());
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchExternalDecoderTest, "Inkpot.Prosetta.WatchExternalDecoder",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
