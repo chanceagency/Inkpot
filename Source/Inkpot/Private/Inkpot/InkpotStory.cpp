@@ -691,7 +691,8 @@ void UInkpotStory::OnContinueInternal()
 
 void UInkpotStory::OnMakeChoiceInternal(TSharedPtr<Ink::FChoice> InChoice)
 {
-	if(!EventOnContinue.IsBound())
+	// Skip the choice lookup when nobody listens and the debug dump is off.
+	if(!EventOnMakeChoice.IsBound() && !INKPOT_LOG_ACTIVE())
 		return;
 	int32 key = InChoice->GetIndex();
 	TObjectPtr<UInkpotChoice>* choicePtr = Choices.FindByPredicate([key](TObjectPtr<UInkpotChoice> pChoice) { return *pChoice == key; });
