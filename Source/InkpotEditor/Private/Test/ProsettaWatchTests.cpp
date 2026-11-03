@@ -445,6 +445,7 @@ bool FProsettaWatchEmptyAudioTest::RunTest(const FString&)
  watch->ConsumeEvent(empty.Event);
  AddExpectedError(TEXT("is empty; imported as unvoiced"), EAutomationExpectedErrorFlags::Contains, 1);
  TestTrue(TEXT("zero-byte selected audio does not block generation"), watch->TryApplyPending());
+ TestTrue(TEXT("empty take surfaced in Watch Status"), watch->GetStatus().Contains(TEXT("1 empty selected audio take as unvoiced")));
  TestEqual(TEXT("empty MP3 never resolves or downloads a decoder"), resolves, 0);
  TestEqual(TEXT("empty artifact keeps its identity"), state->Assets.FindRef(TEXT("audio-file:take1")).Get(), static_cast<UObject*>(audio));
  TestNull(TEXT("old audio cleared instead of playing stale take"), audio->Audio.Get());

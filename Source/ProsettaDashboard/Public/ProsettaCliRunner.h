@@ -108,6 +108,7 @@ private:
 		void* StdoutWrite = nullptr;
 		FString Buffer;
 		FString PendingJson;
+		bool bDiscardingJson = false;
 		double StartedAt = 0;
 		FProsettaCliResult Result;
 		bool bCancelRequested = false;
@@ -115,6 +116,8 @@ private:
 	bool Tick(float);
 	void StartNext();
 	void ConsumeLine(FActive& Run, const FString& Line);
+	static bool CompletePendingJson(FActive& Run);
+	static void DiscardPendingJson(FActive& Run);
 	void ConsumeBufferedOutput(FActive& Run, bool bFlush);
 	void Finish(FProsettaCliResult Result);
 	void CloseActive();

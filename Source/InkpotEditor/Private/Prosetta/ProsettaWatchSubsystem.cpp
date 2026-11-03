@@ -399,13 +399,16 @@ bool UProsettaWatchSubsystem::TryApplyPending()
   const FString event = *queued;
   FString error;
   UProsettaGenerationAsset* accepted = nullptr;
+  const FString prior = Status;
   const bool bApplied = ApplyGeneration(event, error, accepted);
+  // ApplyGeneration writes Status only for an import notice; cleanup below replaces it, so keep it.
+  const FString notice = Status != prior ? Status : FString();
   const TStrongObjectPtr<UProsettaGenerationAsset> announce(accepted);
   const FString* current = Pending.Find(name);
   if (current && *current == event) Pending.Remove(name);
   if (!bApplied) { Status = TEXT("Import failed; previous generation retained: ") + error; return false; }
   CleanupRetiredAssets(name);
-  Status = TEXT("Applied generation: ") + name + TEXT(". ") + Status;
+  Status = TEXT("Applied generation: ") + name + TEXT(". ") + Status + (notice.IsEmpty() ? FString() : TEXT(" ") + notice);
   if (announce.IsValid()) OnGenerationAccepted.Broadcast(*announce.Get());
  }
  return true;
@@ -446,6 +449,7 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  TSet<FString> keys;
  FString metadata;
 
+ int32 unvoiced = 0;
  for (const auto& value : *artifacts)
  {
   const TSharedPtr<FJsonObject>* artifact = nullptr;
@@ -521,44 +525,45 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
     // artifact identity with no SoundWave, clearing any prior take rather than stalling
     // the whole story or inventing audio. The mirror and selected take stay untouched.
     UE_LOG(LogProsettaWatchImport, Warning, TEXT("Selected audio %s (%s) is empty; imported as unvoiced."), *candidate.Key, *relative);
+    ++unvoiced;
    }
    else
    {
-   FString wav = candidate.Path;
-   if (!relative.EndsWith(TEXT(".wav"), ESearchCase::IgnoreCase))
-   {
-    if (DecoderResolver && (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)))
+    FString wav = candidate.Path;
+    if (!relative.EndsWith(TEXT(".wav"), ESearchCase::IgnoreCase))
     {
-     // Re-resolved whenever the cached decoder is missing; only an existing absolute path is kept.
-     Decoder.Empty();
-     FString resolved, resolveError;
-     if (!DecoderResolver(resolved, resolveError) || FPaths::IsRelative(resolved) || !FPaths::FileExists(resolved))
+     if (DecoderResolver && (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)))
      {
-      OutError = TEXT("Audio decoder unavailable: ") + (resolveError.IsEmpty() ? FString(TEXT("the resolver found no absolute FFmpeg executable.")) : resolveError.Left(512));
-      return false;
+      // Re-resolved whenever the cached decoder is missing; only an existing absolute path is kept.
+      Decoder.Empty();
+      FString resolved, resolveError;
+      if (!DecoderResolver(resolved, resolveError) || FPaths::IsRelative(resolved) || !FPaths::FileExists(resolved))
+      {
+       OutError = TEXT("Audio decoder unavailable: ") + (resolveError.IsEmpty() ? FString(TEXT("the resolver found no absolute FFmpeg executable.")) : resolveError.Left(512));
+       return false;
+      }
+      Decoder = resolved;
      }
-     Decoder = resolved;
+     if (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)) { OutError = TEXT("Compressed audio needs an absolute FFmpeg executable ( StartWatch's AudioDecoder or ConfigureExternalWatch's resolver )."); return false; }
+     const FString stage = FPaths::ProjectSavedDir() / TEXT("ProsettaAudioStage");
+     IFileManager::Get().MakeDirectory(*stage, true);
+     wav = stage / (candidate.Checksum + TEXT(".wav"));
+     const FString arguments = FString::Printf(TEXT("-nostdin -v error -y -i \"%s\" -vn -acodec pcm_s16le \"%s\""), *candidate.Path, *wav);
+     int32 exitCode = -1;
+     FString decoderError;
+     if (!FPlatformProcess::ExecProcess(*Decoder, *arguments, &exitCode, nullptr, &decoderError) || exitCode != 0)
+     { OutError = FString::Printf(TEXT("Selected audio decode failed: %s (%s), exit %d. %s"), *candidate.Key, *relative, exitCode, *decoderError.TrimStartAndEnd().Replace(TEXT("\r"), TEXT("")).Replace(TEXT("\n"), TEXT(" ")).Left(1024)); return false; }
     }
-    if (Decoder.IsEmpty() || !FPaths::FileExists(Decoder)) { OutError = TEXT("Compressed audio needs an absolute FFmpeg executable ( StartWatch's AudioDecoder or ConfigureExternalWatch's resolver )."); return false; }
-    const FString stage = FPaths::ProjectSavedDir() / TEXT("ProsettaAudioStage");
-    IFileManager::Get().MakeDirectory(*stage, true);
-    wav = stage / (candidate.Checksum + TEXT(".wav"));
-    const FString arguments = FString::Printf(TEXT("-nostdin -v error -y -i \"%s\" -vn -acodec pcm_s16le \"%s\""), *candidate.Path, *wav);
-    int32 exitCode = -1;
-    FString decoderError;
-    if (!FPlatformProcess::ExecProcess(*Decoder, *arguments, &exitCode, nullptr, &decoderError) || exitCode != 0)
-    { OutError = FString::Printf(TEXT("Selected audio decode failed: %s (%s), exit %d. %s"), *candidate.Key, *relative, exitCode, *decoderError.TrimStartAndEnd().Left(1024)); return false; }
-   }
-   TArray<uint8> pcm;
-   FWaveModInfo info;
-   FString waveError;
-   if (!FFileHelper::LoadFileToArray(pcm, *wav) || !info.ReadWaveInfo(pcm.GetData(), pcm.Num(), &waveError))
-   { OutError = TEXT("Invalid decoded WAV: ") + waveError; return false; }
-   USoundFactory* factory = NewObject<USoundFactory>();
-   factory->SuppressImportDialogs();
-   const uint8* begin = pcm.GetData();
-   candidate.Audio.Reset(Cast<USoundWave>(factory->FactoryCreateBinary(USoundWave::StaticClass(), GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), USoundWave::StaticClass()), RF_Transient, nullptr, TEXT("wav"), begin, begin + pcm.Num(), GWarn)));
-   if (!candidate.Audio.IsValid()) { OutError = TEXT("Selected audio import failed: ") + candidate.Key; return false; }
+    TArray<uint8> pcm;
+    FWaveModInfo info;
+    FString waveError;
+    if (!FFileHelper::LoadFileToArray(pcm, *wav) || !info.ReadWaveInfo(pcm.GetData(), pcm.Num(), &waveError))
+    { OutError = TEXT("Invalid decoded WAV: ") + waveError; return false; }
+    USoundFactory* factory = NewObject<USoundFactory>();
+    factory->SuppressImportDialogs();
+    const uint8* begin = pcm.GetData();
+    candidate.Audio.Reset(Cast<USoundWave>(factory->FactoryCreateBinary(USoundWave::StaticClass(), GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), USoundWave::StaticClass()), RF_Transient, nullptr, TEXT("wav"), begin, begin + pcm.Num(), GWarn)));
+    if (!candidate.Audio.IsValid()) { OutError = TEXT("Selected audio import failed: ") + candidate.Key; return false; }
    }
   }
   else
@@ -704,6 +709,8 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  // in an editor-only retirement map, preserving user references until explicit cleanup.
  NativeGenerationPaths.Add(name, root);
  OutAccepted = state;
+ // TryApplyPending appends this notice to the applied-generation status, so the silent take shows in Watch Status.
+ if (unvoiced > 0) Status = FString::Printf(TEXT("Imported %d empty selected audio %s as unvoiced."), unvoiced, unvoiced == 1 ? TEXT("take") : TEXT("takes"));
  return true;
 }
 

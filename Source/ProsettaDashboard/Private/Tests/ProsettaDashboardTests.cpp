@@ -499,6 +499,16 @@ bool FProsettaDashboardCliMultilineJsonTest::RunTest(const FString&)
  TestEqual(TEXT("truncated JSON not delivered"), Delivered, 4);
  TestTrue(TEXT("truncated JSON produces a safe diagnostic"), Run.Result.Notices.Last().Contains(TEXT("incomplete or malformed")));
  TestTrue(TEXT("partial JSON discarded at EOF"), Run.PendingJson.IsEmpty());
+ // A malformed fragment never swallows the next object, and stderr notices stay notices.
+ Run.Buffer = TEXT("{\"type\":\"cut\n{\"type\":\"next\"}\n");
+ Runner.ConsumeBufferedOutput(Run, false);
+ TestEqual(TEXT("next object recovers after a malformed one"), Delivered, 5);
+ TestTrue(TEXT("malformed fragment reported"), Run.Result.Notices.Last().Contains(TEXT("incomplete or malformed")));
+ Run.Buffer = TEXT("{\n  \"id\": 9007199254740993\nError: interleaved\n}\n");
+ Runner.ConsumeBufferedOutput(Run, false);
+ TestEqual(TEXT("interleaved notice kept out of the object"), Run.Result.Notices.Last(), FString(TEXT("Error: interleaved")));
+ TestEqual(TEXT("object around the notice delivered"), Delivered, 6);
+ TestTrue(TEXT("CLI number text preserved"), Run.Result.JsonLines.Last().Contains(TEXT("9007199254740993")));
  return true;
 }
 

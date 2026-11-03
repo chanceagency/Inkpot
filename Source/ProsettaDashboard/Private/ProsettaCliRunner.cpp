@@ -195,29 +195,50 @@ void FProsettaCliRunner::StartNext()
 	}
 }
 
+bool FProsettaCliRunner::CompletePendingJson(FActive& Run)
+{
+	TSharedPtr<FJsonObject> Object;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Run.PendingJson), Object) || !Object.IsValid()) { return false; }
+	// Keep the CLI's own text: re-serializing would round every number through double.
+	Run.Result.JsonLines.Add(MoveTemp(Run.PendingJson));
+	Run.PendingJson.Empty();
+	Run.Result.JsonObjects.Add(Object);
+	Run.Pending.OnLine.ExecuteIfBound(Object);
+	return true;
+}
+
+void FProsettaCliRunner::DiscardPendingJson(FActive& Run)
+{
+	if (Run.PendingJson.IsEmpty()) { return; }
+	Run.PendingJson.Empty();
+	Run.Result.Notices.Add(TEXT("Error: CLI returned incomplete or malformed JSON."));
+}
+
 void FProsettaCliRunner::ConsumeLine(FActive& Run, const FString& RawLine)
 {
 	const FString Line = RawLine.TrimStartAndEnd();
 	if (Line.IsEmpty()) { return; }
-	if (!Run.PendingJson.IsEmpty() || Line.StartsWith(TEXT("{")))
+	// A top-level object opens and closes at column 0; everything between is indented. A new object
+	// therefore abandons an unparseable fragment, and only a closing line is worth a full parse.
+	const bool bOpens = RawLine.StartsWith(TEXT("{"));
+	const bool bCloses = RawLine.StartsWith(TEXT("}"));
+	if (bOpens) { DiscardPendingJson(Run); Run.bDiscardingJson = false; }
+	if (Run.bDiscardingJson) { Run.bDiscardingJson = !bCloses; return; }
+	// stderr shares the pipe: a notice interleaved into a pretty-printed object is still a notice.
+	const bool bInterleavedNotice = !Run.PendingJson.IsEmpty() && !bCloses && !FChar::IsWhitespace(RawLine[0]) && IsNoticeLine(Line);
+	if (!bInterleavedNotice && (!Run.PendingJson.IsEmpty() || Line.StartsWith(TEXT("{"))))
 	{
-		// One-shot CLI commands pretty-print JSON; watch emits one compact object per line.
-		Run.PendingJson += Line + TEXT("\n");
-		TSharedPtr<FJsonObject> Object;
-		if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Run.PendingJson), Object) && Object.IsValid())
-		{
-			FString Compact;
-			FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Compact));
-			Run.PendingJson.Empty();
-			Run.Result.JsonLines.Add(Compact);
-			Run.Result.JsonObjects.Add(Object);
-			Run.Pending.OnLine.ExecuteIfBound(Object);
-			return;
-		}
+		// One-shot CLI commands pretty-print JSON; watch emits one compact object per line. A JSON string
+		// cannot span lines, so joining trimmed lines keeps the text valid and on one line.
+		const bool bFirst = Run.PendingJson.IsEmpty();
+		if (!bFirst) { Run.PendingJson += TEXT(' '); }
+		Run.PendingJson += Line;
+		if ((bFirst || bCloses) && CompletePendingJson(Run)) { return; }
 		// Bound unexpected output without retaining or logging raw potentially sensitive text.
 		if (Run.PendingJson.Len() > 16 * 1024 * 1024)
 		{
 			Run.PendingJson.Empty();
+			Run.bDiscardingJson = !bCloses;
 			Run.Result.Notices.Add(TEXT("Error: CLI JSON output exceeded the 16 MiB limit."));
 		}
 		return;
@@ -245,11 +266,9 @@ void FProsettaCliRunner::ConsumeBufferedOutput(FActive& Run, bool bFlush)
 	if (bFlush)
 	{
 		if (!Run.Buffer.IsEmpty()) { ConsumeLine(Run, Run.Buffer); Run.Buffer.Empty(); }
-		if (!Run.PendingJson.IsEmpty())
-		{
-			Run.PendingJson.Empty();
-			Run.Result.Notices.Add(TEXT("Error: CLI returned incomplete or malformed JSON."));
-		}
+		// An object whose closing brace was indented still gets one complete parse at exit.
+		if (!Run.PendingJson.IsEmpty() && !CompletePendingJson(Run)) { DiscardPendingJson(Run); }
+		Run.bDiscardingJson = false;
 	}
 }
 
