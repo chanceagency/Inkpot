@@ -32,7 +32,8 @@ public class Inkpot : ModuleRules
                 "DeveloperSettings",
                 "GameplayTags",
 
-                "Json"
+                "Json",
+                "UMG"
             }
         );
 		
@@ -41,7 +42,6 @@ public class Inkpot : ModuleRules
 			{
 				"Slate",
 				"SlateCore",
-				"UMG"
 			}
 		);
 		
