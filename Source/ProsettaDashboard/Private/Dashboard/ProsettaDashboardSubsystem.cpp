@@ -6,6 +6,7 @@
 #include "ProsettaProjectWatch.h"
 #include "ProsettaPython.h"
 #include "ProsettaStoryAssetBuild.h"
+#include "Inkpot/Prosetta/ProsettaSyncInspector.h"
 #include "Inkpot/Prosetta/ProsettaEditorWatch.h"
 #include "Inkpot/Prosetta/ProsettaStorySource.h"
 #include "Inkpot/Prosetta/ProsettaStorySourceActor.h"
@@ -221,7 +222,13 @@ void UProsettaDashboardSubsystem::HandleDirectoryChanged(const TArray<FFileChang
 
 void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenerationAsset& Generation)
 {
-	if (!Model) { return; }
+	if (!Model || bSuspendPolling) { return; }
+	// The broadcast is global: other importers/scopes (including automation fixtures)
+	// must not rebuild this dashboard's mirror or run its presentation importer.
+	FProsettaManifestSummary Manifest;
+	if (Generation.GenerationId.IsEmpty() ||
+		!UProsettaSyncInspector::LoadManifestFile(ProsettaStorySource::ManifestPath(Model->GetDeps().MirrorRoot), Manifest) ||
+		Manifest.GenerationId != Generation.GenerationId) { return; }
 	// A newly accepted generation is already in the mirror; our own import of it is not an "external" change.
 	bManifestChangeQueued = false;
 	Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);

@@ -43,6 +43,7 @@ public:
 	bool bSuspendPolling = false;
 
 private:
+	friend class FProsettaDashboardAcceptedMirrorTest;
 	FProsettaDashboardModelDeps BuildDeps();
 	bool Tick(float DeltaTime);
 	void EnsureManifestWatcher();

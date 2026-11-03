@@ -19,7 +19,8 @@ struct FProsettaCliRequest
 	float TimeoutSeconds = 120.f;
 	/** Keep every non-JSON stdout line (redacted) in TextLines; off keeps JSON objects and notices only. */
 	bool bCaptureText = false;
-	/** Fail the request when the Python or script path is missing instead of trying to launch. */
+	/** The caller reads the last JSON object: a clean exit without one is a failure. */
+	bool bRequiresJsonObject = false;
 	FString Describe() const;
 };
 
@@ -29,7 +30,7 @@ struct FProsettaCliResult
 	bool bCancelled = false;
 	bool bTimedOut = false;
 	int32 ExitCode = -1;
-	/** Parsed stdout lines that were JSON objects, in order. */
+	/** Parsed stdout JSON objects (formatted JSON or NDJSON), in order. */
 	TArray<TSharedPtr<FJsonObject>> JsonObjects;
 	TArray<FString> JsonLines;
 	/** Whitelisted, redacted wrapper/CLI diagnostics (usage errors, wrapper failures). */
@@ -38,9 +39,11 @@ struct FProsettaCliResult
 	bool bCredentialRejection = false;
 	/** Redacted plain stdout when bCaptureText was set. */
 	TArray<FString> TextLines;
+	/** A clean exit that owed a JSON object (bRequiresJsonObject) and printed none. */
+	bool bMissingJsonObject = false;
 	/** What to tell the user when the run did not succeed. */
 	FString UserError;
-	bool Succeeded() const { return bLaunched && !bCancelled && !bTimedOut && ExitCode == 0; }
+	bool Succeeded() const { return bLaunched && !bCancelled && !bTimedOut && !bMissingJsonObject && ExitCode == 0; }
 	TSharedPtr<FJsonObject> LastObject() const { return JsonObjects.IsEmpty() ? nullptr : JsonObjects.Last(); }
 };
 
@@ -50,7 +53,7 @@ DECLARE_DELEGATE_OneParam(FProsettaCliLine, const TSharedPtr<FJsonObject>&);
 /**
  * Runs prosetta.py wrapper commands (FindProsettaScript: the project's Scripts or the plugin's) for the editor, one at a time in order, without blocking the game
  * thread: stdout is drained from a 0.1 s ticker and the completion delegate fires on the game thread.
- * Only JSON object lines and whitelisted notices are retained; anything else from the CLI may echo a
+ * Only JSON objects and whitelisted notices are retained; anything else from the CLI may echo a
  * credential and is dropped. One redacted summary line is logged per run.
  */
 class PROSETTADASHBOARD_API FProsettaCliRunner
@@ -92,6 +95,10 @@ public:
 	int32 Init(const FString& BaseUrl, const FString& ProjectId, FString Secret, FProsettaCliCompleted OnComplete);
 
 private:
+	friend class FProsettaDashboardCliMultilineJsonTest;
+	friend class FProsettaDashboardCliOutputLimitTest;
+	/** Bounds one buffered output line and one accumulating JSON object, in bytes. */
+	static constexpr int64 MaxOutputBytes = 16 * 1024 * 1024;
 	struct FPending
 	{
 		int32 Id;
@@ -106,6 +113,10 @@ private:
 		void* StdoutRead = nullptr;
 		void* StdoutWrite = nullptr;
 		FString Buffer;
+		FString PendingJson;
+		bool bDiscardingJson = false;
+		/** The rest of an oversized line is dropped up to its newline. */
+		bool bDiscardingLine = false;
 		double StartedAt = 0;
 		FProsettaCliResult Result;
 		bool bCancelRequested = false;
@@ -113,6 +124,9 @@ private:
 	bool Tick(float);
 	void StartNext();
 	void ConsumeLine(FActive& Run, const FString& Line);
+	static bool CompletePendingJson(FActive& Run);
+	static void DiscardPendingJson(FActive& Run);
+	void ConsumeBufferedOutput(FActive& Run, bool bFlush);
 	void Finish(FProsettaCliResult Result);
 	void CloseActive();
 

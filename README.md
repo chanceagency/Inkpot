@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.49.24** of the plugin.</br>
+This is version **1.50.24** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta Dashboard
@@ -51,6 +51,11 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.50.24)
+The dashboard's volume list loads again. Current CLI commands pretty-print their JSON, which `FProsettaCliRunner` used to drop because it parsed one line at a time, so the dashboard reported `volumes failed:` after a successful exit. The runner now joins formatted objects across lines and pipe reads, keeps one-object-per-line NDJSON callbacks for Watch, and treats stderr text interleaved into an object as a notice. A malformed line no longer stalls the stream, and output is bounded at 16 MiB per line or object. Requests that owe a JSON object (`credentials`, `whoami`, `volumes`) now fail with the CLI's last notice when they print none.<br>
+Watch no longer rejects a whole generation over a selected voice take with zero bytes, as some providers return for punctuation-only lines. Such a take is imported as unvoiced on its existing identity and clears any stale audio, and voice returns once samples do. A warning is logged and Watch Status counts the empty takes only after the generation commits. Nonempty decode failures still reject the generation and now name the take, its path, the exit code and the decoder's diagnostic.<br>
+Accepted-generation notifications are checked against the dashboard mirror's manifest (`ProsettaStorySource::ManifestPath`), so another importer or scope cannot rebuild the current project's story and presentation. Covered by `Inkpot.Prosetta.Dashboard.CliRunner.*`, `Inkpot.Prosetta.WatchEmptyAudio`.<br>
 
 ### Prosetta-specific changes (1.49.24)
 The dashboard now runs the presentation importer installed with `FProsettaDashboardModule::SetPresentationImporter` once per accepted generation, not only on Rebuild. Accepts and Rebuild requests coalesce into one rebuild and one import; the profile's *Import On Accept* and the presence of an importer still gate it, and commandlets never start the subsystem. A project that imported presentation from its own `UProsettaWatchSubsystem::OnGenerationAccepted` handler should drop that handler, or the import runs twice. Covered by `Inkpot.Prosetta.Dashboard.Model.AcceptedGenerationImportsPresentationOnce`.<br>

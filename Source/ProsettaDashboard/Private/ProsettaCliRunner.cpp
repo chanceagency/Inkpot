@@ -73,6 +73,12 @@ bool FProsettaCliRunner::IsNoticeLine(const FString& Line)
 
 void FProsettaCliRunner::DescribeFailure(const FProsettaCliRequest& Request, FProsettaCliResult& Result)
 {
+	if (Result.Succeeded() && Request.bRequiresJsonObject && Result.JsonObjects.IsEmpty())
+	{
+		Result.bMissingJsonObject = true;
+		Result.UserError = Result.Notices.IsEmpty() ? FString(TEXT("CLI returned no JSON object.")) : Result.Notices.Last();
+		return;
+	}
 	if (Result.Succeeded()) { Result.UserError.Empty(); return; }
 	if (!Result.bLaunched) { if (Result.UserError.IsEmpty()) { Result.UserError = TEXT("The Prosetta wrapper could not be launched."); } return; }
 	if (Result.bCancelled) { Result.UserError = TEXT("Cancelled."); return; }
@@ -195,20 +201,55 @@ void FProsettaCliRunner::StartNext()
 	}
 }
 
+bool FProsettaCliRunner::CompletePendingJson(FActive& Run)
+{
+	TSharedPtr<FJsonObject> Object;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Run.PendingJson), Object) || !Object.IsValid()) { return false; }
+	// Keep the CLI's own text: re-serializing would round every number through double.
+	Run.Result.JsonLines.Add(MoveTemp(Run.PendingJson));
+	Run.PendingJson.Empty();
+	Run.Result.JsonObjects.Add(Object);
+	Run.Pending.OnLine.ExecuteIfBound(Object);
+	return true;
+}
+
+void FProsettaCliRunner::DiscardPendingJson(FActive& Run)
+{
+	if (Run.PendingJson.IsEmpty()) { return; }
+	Run.PendingJson.Empty();
+	Run.Result.Notices.Add(TEXT("Error: CLI returned incomplete or malformed JSON."));
+}
+
 void FProsettaCliRunner::ConsumeLine(FActive& Run, const FString& RawLine)
 {
 	const FString Line = RawLine.TrimStartAndEnd();
 	if (Line.IsEmpty()) { return; }
-	if (Line.StartsWith(TEXT("{")))
+	// A top-level object opens and closes at column 0; everything between is indented. A new object
+	// therefore abandons an unparseable fragment, and only a closing line is worth a full parse.
+	const bool bOpens = RawLine.StartsWith(TEXT("{"));
+	const bool bCloses = RawLine.StartsWith(TEXT("}"));
+	if (bOpens) { DiscardPendingJson(Run); Run.bDiscardingJson = false; }
+	if (Run.bDiscardingJson && (bCloses || FChar::IsWhitespace(RawLine[0]))) { Run.bDiscardingJson = !bCloses; return; }
+	// stderr shares the pipe: any other column-0 line inside a pretty-printed object is interleaved text.
+	const bool bInterleaved = !Run.PendingJson.IsEmpty() && !bCloses && !FChar::IsWhitespace(RawLine[0]);
+	if (!bInterleaved && (!Run.PendingJson.IsEmpty() || Line.StartsWith(TEXT("{"))))
 	{
-		TSharedPtr<FJsonObject> Object;
-		if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Line), Object) && Object.IsValid())
+		// One-shot CLI commands pretty-print JSON; watch emits one compact object per line. A JSON string
+		// cannot span lines, so joining trimmed lines keeps the text valid and on one line.
+		const bool bFirst = Run.PendingJson.IsEmpty();
+		if (!bFirst) { Run.PendingJson += TEXT(' '); }
+		Run.PendingJson += Line;
+		// Bound unexpected output without retaining or logging raw potentially sensitive text. A complete
+		// compact line has nothing left to discard.
+		if (int64(Run.PendingJson.Len()) * sizeof(TCHAR) > MaxOutputBytes)
 		{
-			Run.Result.JsonLines.Add(Line);
-			Run.Result.JsonObjects.Add(Object);
-			Run.Pending.OnLine.ExecuteIfBound(Object);
+			Run.PendingJson.Empty();
+			Run.bDiscardingJson = !bFirst && !bCloses;
+			Run.Result.Notices.Add(TEXT("Error: CLI JSON output exceeded the 16 MiB limit."));
 			return;
 		}
+		if (bFirst || bCloses) { CompletePendingJson(Run); }
+		return;
 	}
 	const FString Redacted = UProsettaSyncInspector::RedactCredentialLine(Line);
 	if (IsNoticeLine(Line))
@@ -222,17 +263,40 @@ void FProsettaCliRunner::ConsumeLine(FActive& Run, const FString& RawLine)
 	if (Run.Pending.Request.bCaptureText) { Run.Result.TextLines.Add(Redacted); }
 }
 
+void FProsettaCliRunner::ConsumeBufferedOutput(FActive& Run, bool bFlush)
+{
+	int32 Newline;
+	while (Run.Buffer.FindChar(TEXT('\n'), Newline))
+	{
+		if (Run.bDiscardingLine) { Run.bDiscardingLine = false; }
+		else { ConsumeLine(Run, Run.Buffer.Left(Newline)); }
+		Run.Buffer.RightChopInline(Newline + 1);
+	}
+	if (int64(Run.Buffer.Len()) * sizeof(TCHAR) > MaxOutputBytes)
+	{
+		Run.Buffer.Empty();
+		if (!Run.bDiscardingLine) { Run.Result.Notices.Add(TEXT("Error: CLI output line exceeded the 16 MiB limit.")); }
+		Run.bDiscardingLine = true;
+		// A dropped member line would leave a valid-looking object short of a field.
+		if (!Run.PendingJson.IsEmpty()) { Run.PendingJson.Empty(); Run.bDiscardingJson = true; }
+	}
+	if (bFlush)
+	{
+		if (!Run.Buffer.IsEmpty() && !Run.bDiscardingLine) { ConsumeLine(Run, Run.Buffer); }
+		Run.Buffer.Empty();
+		Run.bDiscardingLine = false;
+		// An object whose closing brace was indented still gets one complete parse at exit.
+		if (!Run.PendingJson.IsEmpty() && !CompletePendingJson(Run)) { DiscardPendingJson(Run); }
+		Run.bDiscardingJson = false;
+	}
+}
+
 bool FProsettaCliRunner::Tick(float)
 {
 	if (!Active) { StartNext(); return true; }
 	FActive& Run = *Active;
 	Run.Buffer += FPlatformProcess::ReadPipe(Run.StdoutRead);
-	int32 Newline;
-	while (Run.Buffer.FindChar(TEXT('\n'), Newline))
-	{
-		ConsumeLine(Run, Run.Buffer.Left(Newline));
-		Run.Buffer.RightChopInline(Newline + 1);
-	}
+	ConsumeBufferedOutput(Run, false);
 	const bool bRunning = FPlatformProcess::IsProcRunning(Run.Process);
 	if (bRunning && !Run.bCancelRequested && FPlatformTime::Seconds() - Run.StartedAt > Run.Pending.Request.TimeoutSeconds)
 	{
@@ -242,7 +306,7 @@ bool FProsettaCliRunner::Tick(float)
 	}
 	if (bRunning) { return true; }
 	Run.Buffer += FPlatformProcess::ReadPipe(Run.StdoutRead);
-	if (!Run.Buffer.IsEmpty()) { ConsumeLine(Run, Run.Buffer); Run.Buffer.Empty(); }
+	ConsumeBufferedOutput(Run, true);
 	int32 ExitCode = -1;
 	FPlatformProcess::GetProcReturnCode(Run.Process, &ExitCode);
 	Run.Result.ExitCode = ExitCode;
@@ -276,6 +340,7 @@ int32 FProsettaCliRunner::Credentials(FProsettaCliCompleted OnComplete)
 	FProsettaCliRequest Request;
 	Request.Command = TEXT("credentials");
 	Request.Args = {TEXT("--json")};
+	Request.bRequiresJsonObject = true;
 	Request.TimeoutSeconds = 30.f;
 	return Enqueue(MoveTemp(Request), MoveTemp(OnComplete));
 }
@@ -285,6 +350,7 @@ int32 FProsettaCliRunner::Whoami(const FProsettaSyncProfile& Profile, FProsettaC
 	FProsettaCliRequest Request;
 	Request.Command = TEXT("whoami");
 	Request.Args = {TEXT("--json")};
+	Request.bRequiresJsonObject = true;
 	Request.BaseUrl = Profile.BaseUrl;
 	Request.ProjectId = Profile.ProjectId;
 	Request.TimeoutSeconds = 60.f;
@@ -296,6 +362,7 @@ int32 FProsettaCliRunner::Volumes(const FProsettaSyncProfile& Profile, FProsetta
 	FProsettaCliRequest Request;
 	Request.Command = TEXT("volumes");
 	Request.Args = {TEXT("--json")};
+	Request.bRequiresJsonObject = true;
 	Request.BaseUrl = Profile.BaseUrl;
 	Request.ProjectId = Profile.ProjectId;
 	Request.TimeoutSeconds = 60.f;
