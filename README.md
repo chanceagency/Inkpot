@@ -2,7 +2,7 @@
 **Inkpot** - A container for **Ink** within the Unreal Engine developed by [The Chinese Room](https://www.thechineseroom.co.uk/), with surgical changes to facilitate running Ink stories authored with [Prosetta](https://prosetta.studio) <br><br>
 
 This is a plugin for Unreal Engine 5.7.4 or later (5.7.4 is the minimum supported version, enforced at build time).<br>
-This is version **1.50.24** of the plugin.</br>
+This is version **1.52.24** of the plugin.</br>
 By parsing out unique ProseLine IDs from embedded <prosetta> tags in your Ink source, we can seamlessly load associated artifacts— voiceover files, localized line text, and more.
 
 ## Prosetta Dashboard
@@ -51,6 +51,14 @@ For general support and chat with other users, check out [Inkle's discord](https
 (You'll find Inkpot chat in #unreal-projects)
 
 ## Changelog  
+
+### Prosetta-specific changes (1.52.24)
+`UProsettaReticuleWidget` is no longer repainted every frame. It is not volatile, so inside an invalidation or retainer panel it stays cached until something changes. Its properties now have Blueprint setters (`SetDiameter`, `SetThickness`, `SetBaseColor`, `SetProgressColor`, `SetProgress`) that invalidate paint, or layout for `Diameter`; prefer them. Direct C++ writes to the fields still work, because the widget compares them with what it last painted on each tick, but inside a cached panel they can reach the screen one frame later. The arc points come from a rotation recurrence instead of a sine and cosine per point. `Inkpot.Prosetta.Reticule.Paint` now also checks that the widget is not volatile, that an unchanged ring stays cached and is not repainted, and that a setter or a direct write repaints inside an `SInvalidationPanel`.<br>
+Story playback does less work per line. `UInkpotStory` no longer gathers its debug dump (flows, tags and every variable) on each continue and choice unless `Inkpot.DebugLog` is on and the `Inkpot` log category is active. It reuses its choice array, and checks for in-flight line rendering before resolving the current flow name. In InkPlusPlus, a synchronous `Continue` no longer reads the clock on every step (only an async continue has a time limit), `FObject::DynamicCastTo` takes its pointer by reference, building the current text and tags no longer copies each output object's pointer, and whitespace cleaning allocates its line once. Story output is unchanged.<br>
+`OnMakeChoice` now fires whenever it has a listener. It used to fire only when `OnContinue` also had one, so a choice-only listener heard nothing. Stories started through the `Inkpot` subsystem were not affected in practice, because their history always listens to `OnContinue`. Covered by `Inkpot.Story.Events.MakeChoiceWithoutContinueListener`.<br>
+
+### Prosetta-specific changes (1.51.24)
+The Inkpot runtime adds `UProsettaReticuleWidget` (`Prosetta/UI/ProsettaReticuleWidget.h`), an optional hit-test-transparent UMG reticule that paints a base ring and a clockwise progress arc from `Diameter`, `Thickness`, `BaseColor`, `ProgressColor` and `Progress`. Its width scales with DPI, it honours the widget color (including a binding) and the disabled state, and it reports `Diameter` as its minimum desired size, so auto-sized slots fit it. `UMG` is now a public dependency of the `Inkpot` module. Covered by `Inkpot.Prosetta.Reticule.Paint`; see *Optional Prosetta radial UI* below.
 
 ### Prosetta-specific changes (1.50.24)
 The dashboard's volume list loads again. Current CLI commands pretty-print their JSON, which `FProsettaCliRunner` used to drop because it parsed one line at a time, so the dashboard reported `volumes failed:` after a successful exit. The runner now joins formatted objects across lines and pipe reads, keeps one-object-per-line NDJSON callbacks for Watch, and treats stderr text interleaved into an object as a notice. A malformed line no longer stalls the stream, and output is bounded at 16 MiB per line or object. Requests that owe a JSON object (`credentials`, `whoami`, `volumes`) now fail with the CLI's last notice when they print none.<br>
@@ -534,4 +542,14 @@ input, trace, or story dependency. The InkpotSandbox `ProsettaReticuleComponent`
 is an optional pawn adapter for the synced event protocol.
 
 `Inkpot.Prosetta.Reticule.Paint` exercises the real Slate paint path, center,
-size, thickness, and clockwise progress.
+size, desired size, thickness and its clamp, DPI scaling, clockwise progress,
+colors and tint, the disabled effect, and non-finite progress. It also checks
+that the widget is not volatile and, inside an `SInvalidationPanel`, that an
+unchanged ring stays cached while a setter or a direct field write repaints it.
+
+The widget is not volatile: it repaints only when a property changes. Prefer the
+Blueprint setters (`SetDiameter`, `SetThickness`, `SetBaseColor`,
+`SetProgressColor`, `SetProgress`), which invalidate it at once. Direct C++ writes
+to the fields still work, since the widget compares them with what it last
+painted on each tick, but inside an invalidation or retainer panel the change can
+reach the screen one frame later.

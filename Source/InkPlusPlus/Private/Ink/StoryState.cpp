@@ -415,7 +415,7 @@ FString Ink::FStoryState::GetCurrentText()
 	{
 		FString newCurrentText;
 		bool inTag = false;
-		for (TSharedPtr<Ink::FObject> outputObj : OutputStream())
+		for (const TSharedPtr<Ink::FObject>& outputObj : OutputStream())
 		{
 			if (!outputObj.IsValid())
 				continue;
@@ -448,7 +448,9 @@ FString Ink::FStoryState::GetCurrentText()
 FString Ink::FStoryState::CleanOutputWhitespace(const FString& Text)
 {
 	FString cleanedOutputStr;
-	
+	// Cleaning only removes characters, so this one allocation covers the whole line.
+	cleanedOutputStr.Reserve(Text.Len());
+
 	int currentWhitespaceStart = -1;
 	int startOfLine = 0;
 
@@ -486,7 +488,7 @@ TArray<FString>& Ink::FStoryState::GetCurrentTags()
         bool inTag = false;
         FString sb;
 
-		for (TSharedPtr< Ink::FObject> outputObj : OutputStream()) {
+		for (const TSharedPtr<Ink::FObject>& outputObj : OutputStream()) {
 			TSharedPtr<Ink::FControlCommand> controlCommand = Ink::FObject::DynamicCastTo<Ink::FControlCommand>(outputObj);
 
             if( controlCommand != nullptr ) {

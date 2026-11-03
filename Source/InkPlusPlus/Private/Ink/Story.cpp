@@ -297,12 +297,14 @@ void Ink::FStory::ContinueInternal(float MillisecondsLimitAsync)
 		if (outputStreamEndsInNewline)
 			break;
 
-		// Run out of async time?
-		const FTimespan elapsedTime = FDateTime::UtcNow() - startTime;
-		const double elapsedMilliseconds = elapsedTime.GetTotalMilliseconds();
-		if (_asyncContinueActive && elapsedMilliseconds > MillisecondsLimitAsync) {
-			UE_LOG(InkPlusPlus, Error, TEXT("Aborting Continue: ink did not complete the request after %sms (%sms limit). There were %s ContinueSingleStep iterations; a large number of iterations indicates a possible infinite loop in the ink story"), *LexToSanitizedString(elapsedMilliseconds), *LexToSanitizedString(MillisecondsLimitAsync), *FString::FormatAsNumber(continueCount));
-			break;
+		// Run out of async time? Only an async continue has a limit, so a synchronous one skips the clock read per step.
+		if (_asyncContinueActive) {
+			const FTimespan elapsedTime = FDateTime::UtcNow() - startTime;
+			const double elapsedMilliseconds = elapsedTime.GetTotalMilliseconds();
+			if (elapsedMilliseconds > MillisecondsLimitAsync) {
+				UE_LOG(InkPlusPlus, Error, TEXT("Aborting Continue: ink did not complete the request after %sms (%sms limit). There were %s ContinueSingleStep iterations; a large number of iterations indicates a possible infinite loop in the ink story"), *LexToSanitizedString(elapsedMilliseconds), *LexToSanitizedString(MillisecondsLimitAsync), *FString::FormatAsNumber(continueCount));
+				break;
+			}
 		}
 	} while (CanContinue());
 
