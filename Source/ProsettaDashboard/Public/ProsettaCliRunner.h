@@ -29,7 +29,7 @@ struct FProsettaCliResult
 	bool bCancelled = false;
 	bool bTimedOut = false;
 	int32 ExitCode = -1;
-	/** Parsed stdout lines that were JSON objects, in order. */
+	/** Parsed stdout JSON objects (formatted JSON or NDJSON), in order. */
 	TArray<TSharedPtr<FJsonObject>> JsonObjects;
 	TArray<FString> JsonLines;
 	/** Whitelisted, redacted wrapper/CLI diagnostics (usage errors, wrapper failures). */
@@ -50,7 +50,7 @@ DECLARE_DELEGATE_OneParam(FProsettaCliLine, const TSharedPtr<FJsonObject>&);
 /**
  * Runs prosetta.py wrapper commands (FindProsettaScript: the project's Scripts or the plugin's) for the editor, one at a time in order, without blocking the game
  * thread: stdout is drained from a 0.1 s ticker and the completion delegate fires on the game thread.
- * Only JSON object lines and whitelisted notices are retained; anything else from the CLI may echo a
+ * Only JSON objects and whitelisted notices are retained; anything else from the CLI may echo a
  * credential and is dropped. One redacted summary line is logged per run.
  */
 class PROSETTADASHBOARD_API FProsettaCliRunner
@@ -92,6 +92,7 @@ public:
 	int32 Init(const FString& BaseUrl, const FString& ProjectId, FString Secret, FProsettaCliCompleted OnComplete);
 
 private:
+	friend class FProsettaDashboardCliMultilineJsonTest;
 	struct FPending
 	{
 		int32 Id;
@@ -106,6 +107,7 @@ private:
 		void* StdoutRead = nullptr;
 		void* StdoutWrite = nullptr;
 		FString Buffer;
+		FString PendingJson;
 		double StartedAt = 0;
 		FProsettaCliResult Result;
 		bool bCancelRequested = false;
@@ -113,6 +115,7 @@ private:
 	bool Tick(float);
 	void StartNext();
 	void ConsumeLine(FActive& Run, const FString& Line);
+	void ConsumeBufferedOutput(FActive& Run, bool bFlush);
 	void Finish(FProsettaCliResult Result);
 	void CloseActive();
 

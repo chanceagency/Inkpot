@@ -22,6 +22,8 @@
 #include "Serialization/ObjectWriter.h"
 #include "Serialization/ObjectReader.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogProsettaWatchImport, Log, All);
+
 namespace
 {
  // Prosetta Sync CLI 0.10.0 is the first release with the native watch command.
@@ -513,6 +515,15 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
   else if (candidate.Key.StartsWith(TEXT("audio-file:")))
   {
    // Decode/import a transient candidate first. No published asset changes on failure.
+   if (bytes.IsEmpty())
+   {
+    // Some providers return no samples for punctuation-only lines. Keep the verified
+    // artifact identity with no SoundWave, clearing any prior take rather than stalling
+    // the whole story or inventing audio. The mirror and selected take stay untouched.
+    UE_LOG(LogProsettaWatchImport, Warning, TEXT("Selected audio %s (%s) is empty; imported as unvoiced."), *candidate.Key, *relative);
+   }
+   else
+   {
    FString wav = candidate.Path;
    if (!relative.EndsWith(TEXT(".wav"), ESearchCase::IgnoreCase))
    {
@@ -534,8 +545,9 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
     wav = stage / (candidate.Checksum + TEXT(".wav"));
     const FString arguments = FString::Printf(TEXT("-nostdin -v error -y -i \"%s\" -vn -acodec pcm_s16le \"%s\""), *candidate.Path, *wav);
     int32 exitCode = -1;
-    if (!FPlatformProcess::ExecProcess(*Decoder, *arguments, &exitCode, nullptr, nullptr) || exitCode != 0)
-    { OutError = TEXT("Selected audio decode failed."); return false; }
+    FString decoderError;
+    if (!FPlatformProcess::ExecProcess(*Decoder, *arguments, &exitCode, nullptr, &decoderError) || exitCode != 0)
+    { OutError = FString::Printf(TEXT("Selected audio decode failed: %s (%s), exit %d. %s"), *candidate.Key, *relative, exitCode, *decoderError.TrimStartAndEnd().Left(1024)); return false; }
    }
    TArray<uint8> pcm;
    FWaveModInfo info;
@@ -546,7 +558,8 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
    factory->SuppressImportDialogs();
    const uint8* begin = pcm.GetData();
    candidate.Audio.Reset(Cast<USoundWave>(factory->FactoryCreateBinary(USoundWave::StaticClass(), GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), USoundWave::StaticClass()), RF_Transient, nullptr, TEXT("wav"), begin, begin + pcm.Num(), GWarn)));
-   if (!candidate.Audio.IsValid()) { OutError = TEXT("Selected audio import failed."); return false; }
+   if (!candidate.Audio.IsValid()) { OutError = TEXT("Selected audio import failed: ") + candidate.Key; return false; }
+   }
   }
   else
   { continue; } // Unrecognized binary stays immutable in the completed generation.

@@ -67,7 +67,7 @@ namespace
   FString Event;
   FString Namespace;
  };
- FFixture Generation(const FString& Scope, const FString& Revision, const FString& Channel, bool Audio = true, bool Corrupt = false, const FString& AudioPath = TEXT("audio/take1.wav"))
+ FFixture Generation(const FString& Scope, const FString& Revision, const FString& Channel, bool Audio = true, bool Corrupt = false, const FString& AudioPath = TEXT("audio/take1.wav"), bool EmptyAudio = false)
  {
   FFixture result;
   const FString id = SHAString(Scope + Revision + Channel);
@@ -109,7 +109,7 @@ namespace
    append(8000, 4); append(16000, 4); append(2, 2); append(16, 2); tag("data"); append(1600, 4);
    wav.AddZeroed(1600);
    wav[44] = static_cast<uint8>(FCString::Atoi(*Revision));
-   add(TEXT("audio-file:take1"), AudioPath, wav, TEXT("binary"));
+   add(TEXT("audio-file:take1"), AudioPath, EmptyAudio ? TArray<uint8>() : wav, TEXT("binary"));
   }
   auto provenance = MakeShared<FJsonObject>();
   provenance->SetStringField(TEXT("id"), id);
@@ -423,6 +423,48 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
  }
  return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchEmptyAudioTest, "Inkpot.Prosetta.WatchEmptyAudio",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProsettaWatchEmptyAudioTest::RunTest(const FString&)
+{
+ const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
+ int32 resolves = 0;
+ watch->ConfigureExternalWatch([&resolves](FString&, FString&) { ++resolves; return false; });
+ const FFixture initial = Generation(scope, TEXT("1"), TEXT("live"));
+ cleanup.Track(initial);
+ watch->ConsumeEvent(initial.Event);
+ if (!TestTrue(TEXT("initial voiced generation applies"), watch->TryApplyPending())) return false;
+ UProsettaGenerationAsset* state = State(initial);
+ if (!TestNotNull(TEXT("generation registry"), state)) return false;
+ UProsettaSyncedArtifact* audio = Cast<UProsettaSyncedArtifact>(state->Assets.FindRef(TEXT("audio-file:take1")));
+ if (!TestNotNull(TEXT("audio wrapper"), audio) || !TestNotNull(TEXT("initial SoundWave"), audio->Audio.Get())) return false;
+ const FFixture empty = Generation(scope, TEXT("2"), TEXT("live"), true, false, TEXT("audio/take1.mp3"), true);
+ cleanup.Track(empty);
+ watch->ConsumeEvent(empty.Event);
+ AddExpectedError(TEXT("is empty; imported as unvoiced"), EAutomationExpectedErrorFlags::Contains, 1);
+ TestTrue(TEXT("zero-byte selected audio does not block generation"), watch->TryApplyPending());
+ TestEqual(TEXT("empty MP3 never resolves or downloads a decoder"), resolves, 0);
+ TestEqual(TEXT("empty artifact keeps its identity"), state->Assets.FindRef(TEXT("audio-file:take1")).Get(), static_cast<UObject*>(audio));
+ TestNull(TEXT("old audio cleared instead of playing stale take"), audio->Audio.Get());
+ TestEqual(TEXT("empty SHA retained"), audio->Checksum, SHA(nullptr, 0));
+ UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")));
+ TestTrue(TEXT("story advances despite empty audio"), story && story->GetCompiledJSON().Contains(TEXT("Generation 2")));
+ const FFixture recovered = Generation(scope, TEXT("3"), TEXT("live"));
+ cleanup.Track(recovered);
+ watch->ConsumeEvent(recovered.Event);
+ TestTrue(TEXT("replacement voiced generation applies"), watch->TryApplyPending());
+ TestNotNull(TEXT("voice restored on same wrapper"), audio->Audio.Get());
+ TestEqual(TEXT("restored artifact identity"), state->Assets.FindRef(TEXT("audio-file:take1")).Get(), static_cast<UObject*>(audio));
+ const FFixture corrupt = Generation(scope, TEXT("4"), TEXT("live"), true, true, TEXT("audio/take1.mp3"), true);
+ cleanup.Track(corrupt);
+ watch->ConsumeEvent(corrupt.Event);
+ TestFalse(TEXT("empty media does not bypass integrity checks"), watch->TryApplyPending());
+ TestTrue(TEXT("prior voiced generation retained on integrity failure"), story->GetCompiledJSON().Contains(TEXT("Generation 3")));
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchExternalDecoderTest, "Inkpot.Prosetta.WatchExternalDecoder",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -474,6 +516,9 @@ bool FProsettaWatchExternalDecoderTest::RunTest(const FString& InParameters)
  watch->ConsumeEvent(located.Event);
  TestFalse(TEXT("stand-in decoder fails the decode"), watch->TryApplyPending());
  TestTrue(TEXT("decode failure is surfaced"), watch->GetStatus().Contains(TEXT("Selected audio decode failed")));
+ TestTrue(TEXT("decode diagnostic identifies take"), watch->GetStatus().Contains(TEXT("audio-file:take1")));
+ TestTrue(TEXT("decode diagnostic identifies path"), watch->GetStatus().Contains(TEXT("audio/take1.ogg")));
+ TestTrue(TEXT("decode diagnostic reports exit code"), watch->GetStatus().Contains(TEXT("exit 1")));
  TestEqual(TEXT("a rejected result is re-resolved"), resolves, 2);
  const FFixture cached = Generation(scope, TEXT("6"), TEXT("live"), true, false, TEXT("audio/take1.ogg"));
  cleanup.Track(cached);

@@ -199,16 +199,28 @@ void FProsettaCliRunner::ConsumeLine(FActive& Run, const FString& RawLine)
 {
 	const FString Line = RawLine.TrimStartAndEnd();
 	if (Line.IsEmpty()) { return; }
-	if (Line.StartsWith(TEXT("{")))
+	if (!Run.PendingJson.IsEmpty() || Line.StartsWith(TEXT("{")))
 	{
+		// One-shot CLI commands pretty-print JSON; watch emits one compact object per line.
+		Run.PendingJson += Line + TEXT("\n");
 		TSharedPtr<FJsonObject> Object;
-		if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Line), Object) && Object.IsValid())
+		if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Run.PendingJson), Object) && Object.IsValid())
 		{
-			Run.Result.JsonLines.Add(Line);
+			FString Compact;
+			FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Compact));
+			Run.PendingJson.Empty();
+			Run.Result.JsonLines.Add(Compact);
 			Run.Result.JsonObjects.Add(Object);
 			Run.Pending.OnLine.ExecuteIfBound(Object);
 			return;
 		}
+		// Bound unexpected output without retaining or logging raw potentially sensitive text.
+		if (Run.PendingJson.Len() > 16 * 1024 * 1024)
+		{
+			Run.PendingJson.Empty();
+			Run.Result.Notices.Add(TEXT("Error: CLI JSON output exceeded the 16 MiB limit."));
+		}
+		return;
 	}
 	const FString Redacted = UProsettaSyncInspector::RedactCredentialLine(Line);
 	if (IsNoticeLine(Line))
@@ -222,17 +234,31 @@ void FProsettaCliRunner::ConsumeLine(FActive& Run, const FString& RawLine)
 	if (Run.Pending.Request.bCaptureText) { Run.Result.TextLines.Add(Redacted); }
 }
 
-bool FProsettaCliRunner::Tick(float)
+void FProsettaCliRunner::ConsumeBufferedOutput(FActive& Run, bool bFlush)
 {
-	if (!Active) { StartNext(); return true; }
-	FActive& Run = *Active;
-	Run.Buffer += FPlatformProcess::ReadPipe(Run.StdoutRead);
 	int32 Newline;
 	while (Run.Buffer.FindChar(TEXT('\n'), Newline))
 	{
 		ConsumeLine(Run, Run.Buffer.Left(Newline));
 		Run.Buffer.RightChopInline(Newline + 1);
 	}
+	if (bFlush)
+	{
+		if (!Run.Buffer.IsEmpty()) { ConsumeLine(Run, Run.Buffer); Run.Buffer.Empty(); }
+		if (!Run.PendingJson.IsEmpty())
+		{
+			Run.PendingJson.Empty();
+			Run.Result.Notices.Add(TEXT("Error: CLI returned incomplete or malformed JSON."));
+		}
+	}
+}
+
+bool FProsettaCliRunner::Tick(float)
+{
+	if (!Active) { StartNext(); return true; }
+	FActive& Run = *Active;
+	Run.Buffer += FPlatformProcess::ReadPipe(Run.StdoutRead);
+	ConsumeBufferedOutput(Run, false);
 	const bool bRunning = FPlatformProcess::IsProcRunning(Run.Process);
 	if (bRunning && !Run.bCancelRequested && FPlatformTime::Seconds() - Run.StartedAt > Run.Pending.Request.TimeoutSeconds)
 	{
@@ -242,7 +268,7 @@ bool FProsettaCliRunner::Tick(float)
 	}
 	if (bRunning) { return true; }
 	Run.Buffer += FPlatformProcess::ReadPipe(Run.StdoutRead);
-	if (!Run.Buffer.IsEmpty()) { ConsumeLine(Run, Run.Buffer); Run.Buffer.Empty(); }
+	ConsumeBufferedOutput(Run, true);
 	int32 ExitCode = -1;
 	FPlatformProcess::GetProcReturnCode(Run.Process, &ExitCode);
 	Run.Result.ExitCode = ExitCode;

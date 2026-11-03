@@ -6,6 +6,8 @@
 #include "ProsettaProfileStore.h"
 #include "ProsettaDashboardSettings.h"
 #include "ProsettaCliRunner.h"
+#include "Inkpot/Prosetta/ProsettaSyncInspector.h"
+#include "Inkpot/Prosetta/ProsettaSyncedArtifact.h"
 #include "ProsettaPython.h"
 #include "ProsettaStoryAssetBuild.h"
 #include "../Dashboard/ProsettaDashboardSubsystem.h"
@@ -467,6 +469,39 @@ bool FProsettaDashboardCliCommandLineTest::RunTest(const FString&)
 	return true;
 }
 
+DASHBOARD_TEST(FProsettaDashboardCliMultilineJsonTest, "CliRunner.MultilineJson")
+bool FProsettaDashboardCliMultilineJsonTest::RunTest(const FString&)
+{
+ FProsettaCliRunner Runner{FString(), FString(), FString()};
+ FProsettaCliRunner::FActive Run;
+ int32 Delivered = 0;
+ Run.Pending.OnLine = FProsettaCliLine::CreateLambda([&Delivered](const TSharedPtr<FJsonObject>&) { ++Delivered; });
+ // Real CLI volumes shape, split across reads in the middle of a JSON string.
+ Run.Buffer = TEXT("{\r\n  \"projectName\": \"Test\",\r\n  \"volumes\": [\r\n    {\"slug\": \"ma");
+ Runner.ConsumeBufferedOutput(Run, false);
+ TestEqual(TEXT("partial object is not delivered"), Delivered, 0);
+ Run.Buffer += TEXT("in\", \"tags\": [{\"name\": \"1.0\"}]}\r\n  ]\r\n}\r\n");
+ Runner.ConsumeBufferedOutput(Run, false);
+ TestEqual(TEXT("pretty JSON delivered once"), Delivered, 1);
+ TestEqual(TEXT("one full result"), Run.Result.JsonLines.Num(), 1);
+ FProsettaVolumesListing Listing;
+ TestTrue(TEXT("dashboard parses the collected volume listing"), UProsettaSyncInspector::ParseVolumesListing(Run.Result.JsonLines.Last(), Listing));
+ TestFalse(TEXT("JSON result normalized to one line"), Run.Result.JsonLines.Last().Contains(TEXT("\n")));
+ // Output arriving just after process exit still needs line-by-line draining.
+ Run.Buffer = TEXT("{\"type\":\"first\"}\n{\"type\":\"second\"}\n{\"type\":\"final\"}");
+ Runner.ConsumeBufferedOutput(Run, true);
+ TestEqual(TEXT("NDJSON including final unterminated line delivered"), Delivered, 4);
+ TestEqual(TEXT("last result retained"), Run.Result.LastObject()->GetStringField(TEXT("type")), FString(TEXT("final")));
+ Runner.ConsumeLine(Run, TEXT("token=must-not-be-retained"));
+ TestTrue(TEXT("unknown text discarded"), Run.Result.TextLines.IsEmpty());
+ Run.Buffer = TEXT("{\n  \"private\": \"must-not-be-logged\"");
+ Runner.ConsumeBufferedOutput(Run, true);
+ TestEqual(TEXT("truncated JSON not delivered"), Delivered, 4);
+ TestTrue(TEXT("truncated JSON produces a safe diagnostic"), Run.Result.Notices.Last().Contains(TEXT("incomplete or malformed")));
+ TestTrue(TEXT("partial JSON discarded at EOF"), Run.PendingJson.IsEmpty());
+ return true;
+}
+
 // ------------------------------------------------------------------ model
 
 namespace
@@ -757,6 +792,27 @@ bool FProsettaDashboardModelReloadPIETest::RunTest(const FString&)
 	TestEqual(TEXT("not repeated"), Fixture.Reloads, 1);
 	TestFalse(TEXT("TryRunPendingReload idle"), Model->TryRunPendingReload());
 	return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardAcceptedMirrorTest, "Model.AcceptedGenerationMatchesMirror")
+bool FProsettaDashboardAcceptedMirrorTest::RunTest(const FString&)
+{
+ FModelFixture Fixture;
+ WriteManifest(Fixture.Deps.MirrorRoot, TEXT("current"));
+ TStrongObjectPtr<UProsettaDashboardSubsystem> Subsystem(NewObject<UProsettaDashboardSubsystem>());
+ Subsystem->Model = Fixture.Make();
+ TStrongObjectPtr<UProsettaGenerationAsset> Generation(NewObject<UProsettaGenerationAsset>());
+ Generation->GenerationId = TEXT("other-scope");
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("another importer cannot rebuild this mirror"), Fixture.Reloads, 0);
+ Generation->GenerationId = TEXT("current");
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("current mirror generation rebuilds once"), Fixture.Reloads, 1);
+ TestEqual(TEXT("current generation imports presentation"), Fixture.PresentationReloads, 1);
+ Subsystem->bSuspendPolling = true;
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("suspended test subsystem never imports"), Fixture.Reloads, 1);
+ return true;
 }
 
 DASHBOARD_TEST(FProsettaDashboardModelAcceptedPresentationTest, "Model.AcceptedGenerationImportsPresentationOnce")

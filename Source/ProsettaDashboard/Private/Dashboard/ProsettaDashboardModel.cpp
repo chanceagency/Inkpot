@@ -898,7 +898,9 @@ void FProsettaDashboardModel::RefreshVolumes()
 		}
 		else
 		{
-			Self->Fail(TEXT("volumes failed: ") + Result.UserError);
+			Self->Fail(TEXT("volumes failed: ") + (Result.UserError.IsEmpty()
+				? (Result.Notices.IsEmpty() ? FString(TEXT("CLI returned no JSON object.")) : Result.Notices.Last())
+				: Result.UserError));
 		}
 		Self->ClearBusy();
 	}));
