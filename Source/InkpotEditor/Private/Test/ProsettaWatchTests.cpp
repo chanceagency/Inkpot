@@ -508,12 +508,14 @@ bool FProsettaWatchAutomaticApplyTest::RunTest(const FString&)
  watch->Tick(0.f);
  TestEqual(TEXT("quiet interval defers automatic import"), watch->GetPendingCount(), 1);
  watch->ConsumeEvent(latest.Event);
- watch->LastPendingEventTime = 0.; // Deterministic elapsed quiet interval, no real-time sleeps.
- UWorld* previous = GEditor->PlayWorld;
- GEditor->PlayWorld = NewObject<UWorld>();
- watch->Tick(0.f);
- TestEqual(TEXT("PIE still defers automatic import"), watch->GetPendingCount(), 1);
- GEditor->PlayWorld = previous;
+ // The receipt stream is still active (LastPendingEventTime is fresh), but the maximum wait has
+ // elapsed: automatic apply must not be starved. Deterministic, no real-time sleeps.
+ watch->FirstPendingEventTime = 0.;
+ {
+  TGuardValue<TObjectPtr<UWorld>> playWorld(GEditor->PlayWorld, NewObject<UWorld>());
+  watch->Tick(0.f);
+  TestEqual(TEXT("PIE still defers automatic import"), watch->GetPendingCount(), 1);
+ }
  // Automation has no foreground editor window. Tick must nevertheless import when safe.
  watch->Tick(0.f);
  TestEqual(TEXT("idle background tick drains pending generations"), watch->GetPendingCount(), 0);

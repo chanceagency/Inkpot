@@ -40,6 +40,28 @@ namespace
 	constexpr double ManifestDebounceSeconds = 0.5;
 	/** Manifest writes this soon after the dashboard's own CLI run (sync, volume switch) are its own, not external. */
 	constexpr double OwnRunGraceSeconds = 3.0;
+
+	/** True when both manifests describe the same project scope and the same verified, uniquely keyed artifacts. */
+	bool SameArtifactSet(const FProsettaManifestSummary& Mirror, const FProsettaManifestSummary& Accepted)
+	{
+		if (Mirror.ProjectId <= 0 || Mirror.ProjectId != Accepted.ProjectId || Mirror.Scope != Accepted.Scope ||
+			Mirror.Artifacts.IsEmpty() || Mirror.Artifacts.Num() != Accepted.Artifacts.Num()) { return false; }
+		TMap<FString, const FProsettaArtifactSummary*> ByKey;
+		ByKey.Reserve(Accepted.Artifacts.Num());
+		for (const FProsettaArtifactSummary& Artifact : Accepted.Artifacts)
+		{
+			if (ByKey.Contains(Artifact.Key)) { return false; }
+			ByKey.Add(Artifact.Key, &Artifact);
+		}
+		for (const FProsettaArtifactSummary& Artifact : Mirror.Artifacts)
+		{
+			// Removing each match rejects duplicate mirror keys that would otherwise pair with one accepted entry twice.
+			const FProsettaArtifactSummary* Match = nullptr;
+			if (!ByKey.RemoveAndCopyValue(Artifact.Key, Match) || Artifact.RelativePath != Match->RelativePath ||
+				Artifact.ByteSize != Match->ByteSize || !Artifact.Checksum.Equals(Match->Checksum, ESearchCase::IgnoreCase)) { return false; }
+		}
+		return true;
+	}
 }
 
 void UProsettaDashboardSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -238,16 +260,11 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 		FString ManifestPath;
 		FProsettaManifestSummary Accepted;
 		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Generation.Provenance), Event) || !Event ||
-			!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath) || FPaths::IsRelative(ManifestPath) ||
-			!UProsettaSyncInspector::LoadManifestFile(ManifestPath, Accepted) || Accepted.GenerationId != Generation.GenerationId ||
-			Manifest.ProjectId <= 0 || Manifest.ProjectId != Accepted.ProjectId || Manifest.Scope != Accepted.Scope ||
-			Manifest.Artifacts.IsEmpty() || Manifest.Artifacts.Num() != Accepted.Artifacts.Num()) { return; }
-		for (const FProsettaArtifactSummary& Artifact : Manifest.Artifacts)
-		{
-			const FProsettaArtifactSummary* Match = Accepted.FindArtifact(Artifact.Key);
-			if (!Match || Artifact.RelativePath != Match->RelativePath || Artifact.ByteSize != Match->ByteSize ||
-				!Artifact.Checksum.Equals(Match->Checksum, ESearchCase::IgnoreCase)) { return; }
-		}
+			!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath)) { return; }
+		// The importer accepts a relative manifestPath that resolves to its full path; resolve it the same way.
+		ManifestPath = FPaths::ConvertRelativePathToFull(ManifestPath);
+		if (!UProsettaSyncInspector::LoadManifestFile(ManifestPath, Accepted) || Accepted.GenerationId != Generation.GenerationId ||
+			!SameArtifactSet(Manifest, Accepted)) { return; }
 	}
 	// A newly accepted generation is already in the mirror; our own import of it is not an "external" change.
 	bManifestChangeQueued = false;
