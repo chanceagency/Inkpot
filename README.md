@@ -602,8 +602,9 @@ requires no spatialization plugin. It does not simulate acoustic reflections.
 with `FProsettaVoicePolicyTags`: `#interrupt`, `#overlap`, `#queue`. Apply the
 speaker default, `UInkpotLine::GetInheritedTags()` (outer knot to inner stitch),
 then `GetTags()` (the line). Last recognized tag within a scope wins. Inherited
-tags are captured from the emitted text's source containers, so they survive
-flow switches and deferred presentation. Presenters own scheduling: InkpotSandbox
+tags are the text-only tags at the top of the knot and stitch the emitted text
+came from (weave gathers and choices are not scopes; dynamic tags are skipped),
+captured with the line so they survive flow switches and deferred presentation. Presenters own scheduling: InkpotSandbox
 implements interrupt, overlapping previous voices, and queued subtitle/audio
 presentation. The speaker identity and policy types are independent of a future
 Wwise playback backend.

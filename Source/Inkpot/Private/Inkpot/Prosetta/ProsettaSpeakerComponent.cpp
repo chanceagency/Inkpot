@@ -2,7 +2,8 @@
 #include "Inkpot/Prosetta/ProsettaSpeakerRegistry.h"
 #include "Components/AudioComponent.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
+#include "GameFramework/Actor.h"
+#include "UObject/UObjectIterator.h"
 #include "Sound/SoundBase.h"
 
 UProsettaSpeakerComponent::UProsettaSpeakerComponent()
@@ -46,7 +47,8 @@ bool UProsettaSpeakerComponent::Matches(int32 InProjectId, int32 InCharacterId) 
 UAudioComponent* UProsettaSpeakerComponent::CreateVoice(USoundBase* Sound)
 {
  UWorld* World = GetWorld();
- if (!Sound || !World || !World->GetAudioDeviceRaw() || !World->AllowAudioPlayback() || !IsRegistered()) { return nullptr; }
+ // The emitter is outered to the owning actor so it stops with it; an ownerless component has nowhere to put it.
+ if (!Sound || !World || !GetOwner() || !World->GetAudioDeviceRaw() || !World->AllowAudioPlayback() || !IsRegistered()) { return nullptr; }
  UAudioComponent* Voice = NewObject<UAudioComponent>(GetOwner(), NAME_None, RF_Transient);
  Voice->bAutoActivate = false;
  Voice->bAutoDestroy = true;
@@ -66,21 +68,26 @@ UProsettaSpeakerComponent* UProsettaSpeakerComponent::Resolve(UWorld* World, int
  UProsettaSpeakerComponent* Best = nullptr;
  double BestDistance = TNumericLimits<double>::Max();
  if (!World || InProjectId <= 0 || InCharacterId <= 0) { return nullptr; }
- for (TActorIterator<AActor> It(World); It; ++It)
+ // Visit only speaker components (class hash), not every actor and its component list, on each line.
+ for (TObjectIterator<UProsettaSpeakerComponent> It; It; ++It)
  {
-  TInlineComponentArray<UProsettaSpeakerComponent*> Speakers(*It);
-  for (auto* Candidate : Speakers)
-  {
-   if (!Candidate->Matches(InProjectId, InCharacterId)) { continue; }
-   const bool Preferred = Candidate->GetOwner() == ConversationActor;
-   const bool BestPreferred = Best && Best->GetOwner() == ConversationActor;
-   const double Distance = FVector::DistSquared(Candidate->GetComponentLocation(), ListenerLocation);
-   if (!Best || (Preferred && !BestPreferred) || (Preferred == BestPreferred &&
-       (Distance < BestDistance || (Distance == BestDistance && Candidate->GetPathName() < Best->GetPathName()))))
-   { Best = Candidate; BestDistance = Distance; }
-  }
+  UProsettaSpeakerComponent* Candidate = *It;
+  if (!IsValid(Candidate) || Candidate->GetWorld() != World || !Candidate->Matches(InProjectId, InCharacterId)) { continue; }
+  const bool Preferred = Candidate->GetOwner() == ConversationActor;
+  const bool BestPreferred = Best && Best->GetOwner() == ConversationActor;
+  const double Distance = FVector::DistSquared(Candidate->GetComponentLocation(), ListenerLocation);
+  if (!Best || (Preferred && !BestPreferred) || (Preferred == BestPreferred &&
+      (Distance < BestDistance || (Distance == BestDistance && Candidate->GetPathName() < Best->GetPathName()))))
+  { Best = Candidate; BestDistance = Distance; }
  }
  return Best;
+}
+void UProsettaSpeakerComponent::OnRegister()
+{
+ Super::OnRegister();
+ // Routing uses the stored IDs. Refresh the picker label once the catalog has renamed the character.
+ const FProsettaSpeakerIdentity* C = SpeakerRegistry && ProjectId == SpeakerRegistry->ProjectId ? SpeakerRegistry->FindById(CharacterId) : nullptr;
+ if (C && Speaker != C->Shortname) { Speaker = C->Shortname; }
 }
 #if WITH_EDITOR
 void UProsettaSpeakerComponent::PostEditChangeProperty(FPropertyChangedEvent& Event)

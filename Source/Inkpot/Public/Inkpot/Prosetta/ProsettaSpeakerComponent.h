@@ -43,6 +43,7 @@ public:
  UFUNCTION(BlueprintCallable, Category="Prosetta|Audio") UAudioComponent* CreateVoice(USoundBase* Sound);
  /** Prefer the conversation actor, otherwise nearest to listener; stable path breaks ties. */
  static UProsettaSpeakerComponent* Resolve(UWorld* World, int32 InProjectId, int32 InCharacterId, AActor* ConversationActor, const FVector& ListenerLocation);
+ virtual void OnRegister() override;
 #if WITH_EDITOR
  virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
 #endif

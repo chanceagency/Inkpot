@@ -15,6 +15,7 @@
 #include "Settings/InkpotSettings.h"
 #include "Ink/Container.h"
 #include "Ink/Divert.h"
+#include "Ink/ControlCommand.h"
 #include "GameplayTagsManager.h"
 #include "Logging/MessageLog.h"
 #include "Engine/Engine.h"
@@ -1140,25 +1141,78 @@ void UInkpotStory::BroadcastFlowEnded(const FString& InFlowName)
 		EventOnFlowEnded.Broadcast(this, InFlowName);
 }
 
+namespace
+{
+	/** A knot or stitch: a named container addressed by names alone. Weave gathers and choice
+	 * bodies are named too, but sit under an unnamed weave, so their paths contain an index. */
+	TSharedPtr<Ink::FContainer> AsFlowScope(const TSharedPtr<Ink::FObject>& Object)
+	{
+		TSharedPtr<Ink::FContainer> Container = Ink::FObject::DynamicCastTo<Ink::FContainer>(Object);
+		if (!Container.IsValid() || !Container->HasValidName()) { return nullptr; }
+		const TSharedPtr<Ink::FPath> Path = Container->GetPath();
+		for (int32 Index = 0; Index < Path->GetLength(); ++Index)
+		{
+			if (Path->GetComponent(Index)->IsIndex()) { return nullptr; }
+		}
+		return Container;
+	}
+
+	/** Text-only tags at the very top of a knot or stitch, as TagsForContentAtPath reads them.
+	 * A dynamic tag is skipped here instead of raising a story error on every line it covers. */
+	void AppendLeadingStaticTags(TSharedPtr<Ink::FContainer> Container, TArray<FString>& OutTags)
+	{
+		if (Container->GetContent()->IsEmpty()) { return; }
+		if (TSharedPtr<Ink::FContainer> First = Ink::FObject::DynamicCastTo<Ink::FContainer>((*Container->GetContent())[0]))
+		{
+			Container = First;
+		}
+		bool bInTag = false;
+		bool bStaticTag = true;
+		TArray<FString> TagText;
+		for (const TSharedPtr<Ink::FObject>& Content : *Container->GetContent())
+		{
+			if (const TSharedPtr<Ink::FControlCommand> Command = Ink::FObject::DynamicCastTo<Ink::FControlCommand>(Content))
+			{
+				if (Command->GetCommandType() == Ink::ECommandType::BeginTag) { bInTag = true; bStaticTag = true; TagText.Reset(); }
+				else if (Command->GetCommandType() == Ink::ECommandType::EndTag)
+				{
+					if (bInTag && bStaticTag) { OutTags.Append(TagText); }
+					bInTag = false;
+				}
+				else if (bInTag) { bStaticTag = false; }
+			}
+			else if (bInTag)
+			{
+				const TSharedPtr<Ink::FValueString> Text = Ink::FObject::DynamicCastTo<Ink::FValueString>(Content);
+				if (Text) { TagText.Add(Text->GetValue()); }
+				else { bStaticTag = false; }
+			}
+			else { break; }
+		}
+	}
+}
+
 UInkpotLine *UInkpotStory::GetCurrentLine()
 {
 	UInkpotLine* line = NewObject<UInkpotLine>( this );
 	// The story's current tags change on every Continue; the line keeps its own copy.
 	line->Initialise( GetCurrentText(), GetCurrentTags() );
- // Output objects retain their source parents even when Continue diverted past the line's knot.
- // Snapshot named-container defaults now rather than consulting the story's later flow/pointer.
- TArray<TSharedPtr<Ink::FObject>> Scopes;
- for (const auto& Object : StoryInternal->GetStoryState()->OutputStream())
- {
-  const auto TextValue = Ink::FObject::DynamicCastTo<Ink::FValueString>(Object);
-  if (!TextValue || TextValue->GetValue().TrimStartAndEnd().IsEmpty() || !Object->HasParent()) { continue; }
-  for (auto Parent = Object->GetParent(); Parent.IsValid(); Parent = Parent->GetParent())
-  { if (Parent->HasValidName() && Ink::FObject::DynamicCastTo<Ink::FContainer>(Parent)) { Scopes.Insert(Parent, 0); } }
-  break;
- }
- TArray<FString> Inherited;
- for (const auto& Scope : Scopes) { Inherited.Append(TagsForContentAtPath(Scope->GetPath()->ToString())); }
- line->SetInheritedTags(MoveTemp(Inherited));
+	// Output objects retain their source parents even when Continue diverted past the line's knot.
+	// Snapshot the knot/stitch defaults now rather than consulting the story's later flow/pointer.
+	TArray<TSharedPtr<Ink::FContainer>> Scopes;
+	for (const TSharedPtr<Ink::FObject>& Object : StoryInternal->GetStoryState()->OutputStream())
+	{
+		const TSharedPtr<Ink::FValueString> TextValue = Ink::FObject::DynamicCastTo<Ink::FValueString>(Object);
+		if (!TextValue || TextValue->GetValue().TrimStartAndEnd().IsEmpty() || !Object->HasParent()) { continue; }
+		for (TSharedPtr<Ink::FObject> Parent = Object->GetParent(); Parent.IsValid(); Parent = Parent->GetParent())
+		{
+			if (TSharedPtr<Ink::FContainer> Scope = AsFlowScope(Parent)) { Scopes.Insert(Scope, 0); }
+		}
+		break;
+	}
+	TArray<FString> Inherited;
+	for (const TSharedPtr<Ink::FContainer>& Scope : Scopes) { AppendLeadingStaticTags(Scope, Inherited); }
+	line->SetInheritedTags(MoveTemp(Inherited));
 	return line;
 }
 

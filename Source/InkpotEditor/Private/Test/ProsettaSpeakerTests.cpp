@@ -38,6 +38,26 @@ bool FProsettaSpeakerTest::RunTest(const FString& Parameters)
  TestNull(TEXT("unmapped narrator remains unmapped"), UProsettaSpeakerComponent::Resolve(World,42,8,nullptr,FVector::ZeroVector));
  Registry->Characters[0].Shortname = TEXT("RENAMED");
  TestTrue(TEXT("rename keeps mapping"), Near->Matches(42,7));
+ Near->UnregisterComponent(); Near->RegisterComponent();
+ TestEqual(TEXT("re-registration refreshes the renamed label"), Near->Speaker, FString(TEXT("RENAMED")));
+ TestNull(TEXT("no voice without a sound"), Near->CreateVoice(nullptr));
+ auto* Sound = NewObject<USoundWaveProcedural>();
+ if (World->GetAudioDeviceRaw() && World->AllowAudioPlayback())
+ {
+  UAudioComponent* Voice = Near->CreateVoice(Sound);
+  if (TestNotNull(TEXT("voice created"), Voice))
+  {
+   TestTrue(TEXT("voice attached to the speaker"), Voice->GetAttachParent() == Near && Voice->GetOwner() == Near->GetOwner());
+   TestTrue(TEXT("voice waits for the caller to play"), !Voice->bAutoActivate && !Voice->IsPlaying() && Voice->IsRegistered());
+   TestTrue(TEXT("native attenuation applied"), Voice->bOverrideAttenuation && Voice->AttenuationOverrides.FalloffDistance == Near->AttenuationOverrides.FalloffDistance);
+   Voice->DestroyComponent();
+  }
+ }
+ else { TestNull(TEXT("no voice without an audio device"), Near->CreateVoice(Sound)); }
+ auto* Ownerless = NewObject<UProsettaSpeakerComponent>(World);
+ Ownerless->RegisterComponentWithWorld(World);
+ TestNull(TEXT("ownerless speaker has no emitter outer"), Ownerless->CreateVoice(Sound));
+ Ownerless->UnregisterComponent();
  Near->bSpatialVoiceEnabled = false;
  TestTrue(TEXT("disabled emitter ignored"), UProsettaSpeakerComponent::Resolve(World,42,7,nullptr,FVector::ZeroVector) == Far);
  TestTrue(TEXT("native panning without plugins"), Far->AttenuationOverrides.SpatializationAlgorithm == SPATIALIZATION_Default);
@@ -57,6 +77,25 @@ bool FProsettaSpeakerTest::RunTest(const FString& Parameters)
 #include "Engine/Engine.h"
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaVoiceScopeTest, "Inkpot.Prosetta.Speakers.PolicyScopes",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaSpeakerRegistryValidationTest, "Inkpot.Prosetta.Speakers.RegistryValidation",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProsettaSpeakerRegistryValidationTest::RunTest(const FString& Parameters)
+{
+ auto* Registry = NewObject<UProsettaSpeakerRegistry>();
+ FString Error;
+ TestTrue(TEXT("trimmed catalog loads"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":42,"characters":[{"id":7,"shortname":" SPHERE "}]})"), Error));
+ const FProsettaSpeakerIdentity* Sphere = Registry->FindById(7);
+ TestTrue(TEXT("shortname stored trimmed"), Sphere && Sphere->Shortname == TEXT("SPHERE") && Sphere->DisplayName == TEXT("SPHERE"));
+ TestNotNull(TEXT("lookup trims"), Registry->FindByShortname(TEXT(" sphere")));
+ TestFalse(TEXT("string ID rejected"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":42,"characters":[{"id":"8","shortname":"A"}]})"), Error));
+ TestFalse(TEXT("fractional ID rejected"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":42,"characters":[{"id":7.5,"shortname":"A"}]})"), Error));
+ TestFalse(TEXT("string project rejected"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":"42","characters":[]})"), Error));
+ TestFalse(TEXT("out-of-range ID rejected"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":42,"characters":[{"id":4294967296,"shortname":"A"}]})"), Error));
+ TestFalse(TEXT("whitespace duplicates rejected"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":42,"characters":[{"id":7,"shortname":"A"},{"id":8,"shortname":" a "}]})"), Error));
+ TestFalse(TEXT("blank shortname rejected"), Registry->LoadCharactersJSON(TEXT(R"({"projectId":42,"characters":[{"id":7,"shortname":"  "}]})"), Error));
+ TestTrue(TEXT("failed loads keep the catalog"), Registry->ProjectId == 42 && Registry->Characters.Num() == 1);
+ return true;
+}
 bool FProsettaVoiceScopeTest::RunTest(const FString& Parameters)
 {
  auto* InkpotSubsystem = GEngine->GetEngineSubsystem<UInkpot>();
@@ -74,6 +113,31 @@ bool FProsettaVoiceScopeTest::RunTest(const FString& Parameters)
  TestTrue(TEXT("scope persists beyond first line"), FProsettaVoicePolicyTags::Resolve(Second->GetInheritedTags(), EProsettaVoicePolicy::Interrupt) == EProsettaVoicePolicy::Overlap);
  TestTrue(TEXT("old line keeps own policy"), First->GetTags().Contains(TEXT("interrupt")));
  InkpotSubsystem->EndStory(Story);
+
+ // A weave gather is named but is not a knot or stitch: its leading tag belongs to its own line only.
+ auto* GatherAsset = NewObject<UInkpotStoryAsset>();
+ GatherAsset->SetCompiledJSON(TEXT(R"({"inkVersion":21,"root":[{"->":"Talk"},"done",{"Talk":[["#","^queue","/#","^Intro","\n",{"->":".^.g-0"},{"g-0":["#","^overlap","/#","^Gathered","\n","^Later","\n","end",null]}],null]}],"listDefs":{}})"));
+ auto* Gather = InkpotSubsystem->BeginStory(GatherAsset);
+ if (!TestNotNull(TEXT("gather fixture story"), Gather)) { return false; }
+ Gather->Continue(); Gather->Continue();
+ TestTrue(TEXT("gather tag stays on its line"), Gather->GetCurrentLine()->GetTags().Contains(TEXT("overlap")));
+ Gather->Continue();
+ UInkpotLine* Later = Gather->GetCurrentLine();
+ TestEqual(TEXT("later gather line"), Later->GetString().TrimStartAndEnd(), FString(TEXT("Later")));
+ TestFalse(TEXT("gather is not a policy scope"), Later->GetInheritedTags().Contains(TEXT("overlap")));
+ TestTrue(TEXT("knot scope still inherited"), Later->GetInheritedTags().Contains(TEXT("queue")));
+ InkpotSubsystem->EndStory(Gather);
+
+ // A dynamic tag at the top of a knot is skipped without a story error; static tags beside it still count.
+ auto* DynamicAsset = NewObject<UInkpotStoryAsset>();
+ DynamicAsset->SetCompiledJSON(TEXT(R"({"inkVersion":21,"root":[{"->":"Dyn"},"done",{"Dyn":[["#","^mood_","ev",{"VAR?":"x"},"out","/ev","/#","#","^queue","/#","^Hi","\n","^Again","\n","end",null],null],"global decl":["ev",1,{"VAR=":"x"},"/ev","end",null]}],"listDefs":{}})"));
+ auto* Dynamic = InkpotSubsystem->BeginStory(DynamicAsset);
+ if (!TestNotNull(TEXT("dynamic tag fixture story"), Dynamic)) { return false; }
+ Dynamic->Continue(); Dynamic->Continue();
+ UInkpotLine* Again = Dynamic->GetCurrentLine();
+ TestEqual(TEXT("second dynamic-knot line"), Again->GetString().TrimStartAndEnd(), FString(TEXT("Again")));
+ TestTrue(TEXT("dynamic knot tag skipped, static kept"), Again->GetInheritedTags() == TArray<FString>{TEXT("queue")});
+ InkpotSubsystem->EndStory(Dynamic);
  return true;
 }
 #endif
