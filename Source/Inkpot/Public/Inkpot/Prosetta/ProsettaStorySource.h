@@ -53,7 +53,11 @@ struct INKPOT_API FProsettaResolvedStoryPaths
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString LinesPath;
 	/** Folder holding localization.json and the per-language CSVs for this source. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString LocalizationFolder;
-	/** Slug the paths belong to; empty for the canonical files. */
+	/**
+	 * Slug the paths belong to. An empty request reports the single scoped volume, or the default
+	 * volume it resolved to (bDefaultVolume); empty for an unnamed canonical story or when no
+	 * volume's files could be resolved.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString VolumeSlug;
 	/** Tag the manifest records for that volume, when it lists one. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString VolumeTag;
