@@ -1105,11 +1105,11 @@ bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
 {
  FModelFixture Fixture;
  const FString PriorRoot = ProsettaStorySource::MirrorRoot();
- FProsettaResolvedStoryPaths PriorPaths;
+ const FString PriorVolume = ProsettaStorySource::EditorSourceVolume();
+ const bool bPriorPending = ProsettaStorySource::IsEditorReleasePending();
  const bool bPriorOverride = PriorRoot != ProsettaStorySource::DefaultMirrorRoot();
- if (bPriorOverride) { ProsettaStorySource::ResolveStoryPaths(PriorRoot, FString(), PriorPaths); }
  ProsettaStorySource::SetEditorMirrorRoot(FString(), FString());
- ON_SCOPE_EXIT { ProsettaStorySource::SetEditorMirrorRoot(bPriorOverride ? PriorRoot : FString(), PriorPaths.VolumeSlug); };
+ ON_SCOPE_EXIT { ProsettaStorySource::SetEditorMirrorRoot(bPriorOverride ? PriorRoot : FString(), PriorVolume, bPriorPending); };
  WriteManifest(Fixture.Deps.MirrorRoot, TEXT("live-current"));
  const FString ReleasedRoot = Fixture.Root / TEXT("FrozenRelease");
  const FString Id = FString::ChrN(64, TCHAR('a'));
@@ -1123,6 +1123,12 @@ bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
  Profile.Volumes.Reset();
  FProsettaVolumeScope Volume; Volume.Slug = TEXT("main"); Profile.Volumes.Add(Volume);
  Subsystem->Model->SetProfile(Profile);
+ FFileHelper::SaveStringToFile(TEXT("unpublished live draft"), *(Fixture.Deps.MirrorRoot / TEXT("compiled/story.json")));
+ Subsystem->RefreshReleasedSource();
+ TestTrue(TEXT("first release selection is held until a registry is accepted"), ProsettaStorySource::IsEditorReleasePending(TEXT("main")));
+ TestFalse(TEXT("another explicit volume is not held"), ProsettaStorySource::IsEditorReleasePending(TEXT("other")));
+ TestNotEqual(TEXT("populated live mirror is not exposed during bootstrap"), Subsystem->Model->GetDeps().MirrorRoot, Fixture.Deps.MirrorRoot);
+ TestFalse(TEXT("pending source has no draft manifest"), Subsystem->Model->GetState().bHasManifest);
  auto Event = MakeShared<FJsonObject>();
  Event->SetNumberField(TEXT("projectId"), 199999);
  Event->SetStringField(TEXT("channel"), TEXT("latest-release"));
@@ -1146,6 +1152,7 @@ bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
  UProsettaSyncInspector::LoadManifestFile(Fixture.Deps.MirrorRoot / TEXT("manifest.json"), Live);
  TestEqual(TEXT("release acceptance never rewrites the live mirror"), Live.GenerationId, FString(TEXT("live-current")));
  TestEqual(TEXT("runtime mirror follows the accepted release"), ProsettaStorySource::MirrorRoot(), ReleasedRoot);
+ TestFalse(TEXT("accepted release clears the playback hold"), ProsettaStorySource::IsEditorReleasePending());
  FProsettaResolvedStoryPaths Explicit;
  ProsettaStorySource::ResolveStoryPaths(ReleasedRoot, TEXT("other-volume"), Explicit);
  TestEqual(TEXT("another explicitly selected scene volume retains its own live source"), Explicit.MirrorRoot, ProsettaStorySource::DefaultMirrorRoot());

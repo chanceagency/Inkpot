@@ -75,6 +75,7 @@ TSharedRef<FProsettaDashboardModel> UProsettaDashboardSubsystem::GetModel()
 	if (!Model)
 	{
 		Model = MakeShared<FProsettaDashboardModel>(BuildDeps());
+		RefreshReleasedSource();
 		Model->SeedChangesFromReceipts(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ProsettaSync"), TEXT("Watch")));
 		Model->Poll(BuildPollInput());
 		EnsureManifestWatcher();
@@ -285,7 +286,7 @@ void UProsettaDashboardSubsystem::RefreshReleasedSource()
 	const FProsettaSyncProfile& Profile = State.Profile;
 	const int32 Project = FCString::Atoi(*(Profile.ProjectId.IsEmpty() ? State.Credentials.ProjectId : Profile.ProjectId));
 	const FString Scope = Profile.Volumes.Num() == 1 && !Profile.Volumes[0].IsFixedTag() ? Profile.Volumes[0].Slug + TEXT("@latest-release") : FString();
-	if (Profile.Mode != EProsettaSyncMode::Watch || Profile.Channel != EProsettaWatchChannel::LatestRelease || Project <= 0 || Scope.IsEmpty())
+	if (Profile.Mode != EProsettaSyncMode::Watch || Profile.Channel != EProsettaWatchChannel::LatestRelease || Scope.IsEmpty())
 	{
 		ClearReleasedSource();
 		return;
@@ -299,6 +300,13 @@ void UProsettaDashboardSubsystem::RefreshReleasedSource()
 		{
 			if (ActiveReleaseGenerationId != Accepted->GenerationId) { HandleGenerationAccepted(*Accepted); }
 		}
+	}
+	if (ActiveReleaseGenerationId.IsEmpty())
+	{
+		if (LiveMirrorRoot.IsEmpty()) { LiveMirrorRoot = Model->GetDeps().MirrorRoot; }
+		ActiveReleaseScope = FString::FromInt(Project) + TEXT("/") + Scope;
+		ProsettaStorySource::SetEditorReleasePending(Project, Profile.Volumes[0].Slug);
+		Model->SetMirrorRoot(ProsettaStorySource::MirrorRoot());
 	}
 }
 
@@ -342,7 +350,11 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 	Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);
 }
 
-void UProsettaDashboardSubsystem::HandlePreBeginPIE(bool) { if (Model) { RefreshReleasedSource(); Model->Poll(BuildPollInput()); } }
+void UProsettaDashboardSubsystem::HandlePreBeginPIE(bool)
+{
+	if (!Model && !IsRunningCommandlet()) { GetModel(); }
+	if (Model) { RefreshReleasedSource(); Model->Poll(BuildPollInput()); }
+}
 void UProsettaDashboardSubsystem::HandleEndPIE(bool) { if (Model) { Model->Poll(BuildPollInput()); } }
 void UProsettaDashboardSubsystem::HandleMapOpened(const FString&, bool) { if (Model) { Model->Poll(BuildPollInput()); } }
 
