@@ -88,6 +88,10 @@ bool FProsettaStorySourceForWorldDefaultTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("default world source resolves without a manifest"), ProsettaStorySource::ResolveStoryPaths(Mirror.Root, Source.VolumeSlug, Paths));
 	const FString Expected = FPaths::Combine(Mirror.Root, TEXT("compiled"), TEXT("story.json"));
 	TestEqual(TEXT("canonical compiled story path without a manifest"), Paths.CompiledStoryPath, Expected);
+	// CompiledStoryPathForWorld resolves the default source against the project's mirror, whatever it holds.
+	FProsettaResolvedStoryPaths Live;
+	ProsettaStorySource::ResolveStoryPaths(ProsettaStorySource::MirrorRoot(), Source.VolumeSlug, Live);
+	TestEqual(TEXT("world path follows the mirror's resolution"), ProsettaStorySource::CompiledStoryPathForWorld(W.World), Live.CompiledStoryPath);
 	return true;
 }
 
@@ -166,14 +170,35 @@ bool FProsettaStorySourcePathsDefaultVolumeTest::RunTest(const FString& Paramete
  TestEqual(TEXT("uses manifest story path"), Paths.CompiledStoryPath, Mirror.Root / TEXT("compiled/main/story.json"));
  TestTrue(TEXT("resolved live files exist without a canonical file"), Paths.IsComplete());
  TestFalse(TEXT("default volume is not an unavailable-volume fallback"), Paths.bFellBackToCanonical);
+ TestTrue(TEXT("default volume is marked as followed"), Paths.bDefaultVolume);
+ TestTrue(TEXT("a single declared default needs no note"), Paths.Note.IsEmpty());
  FProsettaManifestSummary Manifest;
  if (!TestTrue(TEXT("manifest parses"), UProsettaSyncInspector::ParseManifest(JSON, Manifest))) { return false; }
  Manifest.ScopeDetail.Volumes[1].bIsDefault = false;
  TestFalse(TEXT("an ambiguous mirror requires a volume instead of choosing its first story"), ProsettaStorySource::ResolveStoryPathsFromManifest(Manifest, Mirror.Root, TEXT(""), Paths));
  TestTrue(TEXT("ambiguity explains how to select a volume"), Paths.Note.Contains(TEXT("select the level's volume")));
+ TestFalse(TEXT("ambiguity is not a default choice"), Paths.bDefaultVolume);
+ // Several declared defaults: the first is played, and the note says so.
+ FProsettaManifestSummary TwoDefaults = Manifest;
+ TwoDefaults.ScopeDetail.Volumes[0].bIsDefault = true;
+ TwoDefaults.ScopeDetail.Volumes[1].bIsDefault = true;
+ TwoDefaults.ScopeDetail.Volumes.Swap(0, 1);
+ TestTrue(TEXT("several defaults still resolve"), ProsettaStorySource::ResolveStoryPathsFromManifest(TwoDefaults, Mirror.Root, TEXT(""), Paths));
+ TestEqual(TEXT("first declared default played"), Paths.VolumeSlug, FString(TEXT("main")));
+ TestTrue(TEXT("several defaults are reported"), Paths.Note.Contains(TEXT("marks 2 volumes as default")));
+ // The declared default has no compiled story and there is no canonical one: say so, not "playing the canonical story".
+ FProsettaManifestSummary MissingDefault = Manifest;
+ MissingDefault.ScopeDetail.Volumes[0].Slug = TEXT("unsynced");
+ MissingDefault.ScopeDetail.Volumes[0].CompiledStoryArtifactKey.Reset();
+ MissingDefault.ScopeDetail.Volumes[0].bIsDefault = true;
+ TestFalse(TEXT("missing default artifact does not resolve"), ProsettaStorySource::ResolveStoryPathsFromManifest(MissingDefault, Mirror.Root, TEXT(""), Paths));
+ TestTrue(TEXT("missing default is flagged"), Paths.bFellBackToCanonical && Paths.bDefaultVolume);
+ TestTrue(TEXT("missing default names the volume"), Paths.Note.Contains(TEXT("default volume 'unsynced' has no compiled story artifact")));
+ TestFalse(TEXT("missing default does not promise a canonical story"), Paths.Note.Contains(TEXT("playing the canonical story")));
  Manifest.ScopeDetail.Volumes.RemoveAt(0);
  TestTrue(TEXT("a single per-volume artifact resolves without an isDefault field"), ProsettaStorySource::ResolveStoryPathsFromManifest(Manifest, Mirror.Root, TEXT(""), Paths));
  TestEqual(TEXT("single-volume artifact remains selected"), Paths.CompiledStoryPath, Mirror.Root / TEXT("compiled/main/story.json"));
+ TestTrue(TEXT("single volume followed as the default"), Paths.bDefaultVolume);
  return true;
 }
 

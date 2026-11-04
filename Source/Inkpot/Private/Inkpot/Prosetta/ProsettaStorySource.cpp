@@ -119,12 +119,29 @@ namespace ProsettaStorySource
 			// a stale baked asset while Watch has already downloaded the current story.
 			if (CanonicalStory.IsEmpty() && !Manifest.ScopeDetail.Volumes.IsEmpty())
 			{
-				const FProsettaScopeVolumeEntry* Default = Manifest.ScopeDetail.Volumes.FindByPredicate(
-					[](const FProsettaScopeVolumeEntry& Volume) { return Volume.bIsDefault; });
+				const FProsettaScopeVolumeEntry* Default = nullptr;
+				int32 DefaultCount = 0;
+				for (const FProsettaScopeVolumeEntry& Volume : Manifest.ScopeDetail.Volumes)
+				{
+					if (!Volume.bIsDefault) { continue; }
+					if (!Default) { Default = &Volume; }
+					++DefaultCount;
+				}
 				if (!Default && Manifest.ScopeDetail.Volumes.Num() == 1) { Default = &Manifest.ScopeDetail.Volumes[0]; }
 				if (Default && !Default->Slug.IsEmpty())
 				{
-					return ResolveStoryPathsFromManifest(Manifest, InMirrorRoot, Default->Slug, Out);
+					const bool bResolved = ResolveStoryPathsFromManifest(Manifest, InMirrorRoot, Default->Slug, Out);
+					Out.bDefaultVolume = true;
+					if (Out.bFellBackToCanonical)
+					{
+						// There is no canonical story to fall back to, so the volume note would mislead.
+						Out.Note = FString::Printf(TEXT("the synced mirror's default volume '%s' has no compiled story artifact and there is no canonical story; re-sync it from the Prosetta Dashboard"), *Default->Slug);
+					}
+					else if (DefaultCount > 1)
+					{
+						Out.Note = FString::Printf(TEXT("the synced scope marks %d volumes as default; playing the first, '%s'. Select the level's volume in the Prosetta Dashboard."), DefaultCount, *Default->Slug);
+					}
+					return bResolved;
 				}
 				Out.Note = TEXT("The synced mirror has several volumes and no default compiled story; select the level's volume in the Prosetta Dashboard.");
 				return false;
@@ -193,7 +210,7 @@ namespace ProsettaStorySource
 				Out.Note = FString::Printf(TEXT("volume '%s' requested but %s has no readable manifest.json; playing the canonical story"), *VolumeSlug, *InMirrorRoot);
 			}
 		}
-		if (Out.bFellBackToCanonical)
+		if (!Out.Note.IsEmpty())
 		{
 			UE_LOG(LogProsettaStorySource, Warning, TEXT("Prosetta story source: %s"), *Out.Note);
 		}
