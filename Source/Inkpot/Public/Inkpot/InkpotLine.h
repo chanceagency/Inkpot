@@ -57,6 +57,11 @@ public:
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	const TArray<FString> &GetTags() const;
 
+ /** Tags on named source containers, outermost first. Snapshot survives flow changes. */
+ UFUNCTION(BlueprintPure, Category="Inkpot|Line")
+ const TArray<FString>& GetInheritedTags() const { return InheritedTags; }
+ void SetInheritedTags(TArray<FString> InTags) { InheritedTags = MoveTemp(InTags); }
+
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	UInkpotStory* GetStory() const;
 
@@ -81,6 +86,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Line")
 	TArray<FString> Tags;
+
+ UPROPERTY(VisibleAnywhere, Category="Inkpot|Line")
+ TArray<FString> InheritedTags;
 
 	UPROPERTY(VisibleAnywhere, Category = "Inkpot|Line")
 	bool bIsDirty;

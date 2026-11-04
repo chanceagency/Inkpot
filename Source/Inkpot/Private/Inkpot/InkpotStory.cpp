@@ -1145,6 +1145,20 @@ UInkpotLine *UInkpotStory::GetCurrentLine()
 	UInkpotLine* line = NewObject<UInkpotLine>( this );
 	// The story's current tags change on every Continue; the line keeps its own copy.
 	line->Initialise( GetCurrentText(), GetCurrentTags() );
+ // Output objects retain their source parents even when Continue diverted past the line's knot.
+ // Snapshot named-container defaults now rather than consulting the story's later flow/pointer.
+ TArray<TSharedPtr<Ink::FObject>> Scopes;
+ for (const auto& Object : StoryInternal->GetStoryState()->OutputStream())
+ {
+  const auto TextValue = Ink::FObject::DynamicCastTo<Ink::FValueString>(Object);
+  if (!TextValue || TextValue->GetValue().TrimStartAndEnd().IsEmpty() || !Object->HasParent()) { continue; }
+  for (auto Parent = Object->GetParent(); Parent.IsValid(); Parent = Parent->GetParent())
+  { if (Parent->HasValidName() && Ink::FObject::DynamicCastTo<Ink::FContainer>(Parent)) { Scopes.Insert(Parent, 0); } }
+  break;
+ }
+ TArray<FString> Inherited;
+ for (const auto& Scope : Scopes) { Inherited.Append(TagsForContentAtPath(Scope->GetPath()->ToString())); }
+ line->SetInheritedTags(MoveTemp(Inherited));
 	return line;
 }
 
