@@ -648,6 +648,49 @@ bool FProsettaDashboardGeneratedSaveTest::RunTest(const FString&)
  return true;
 }
 
+DASHBOARD_TEST(FProsettaDashboardDefaultVolumeBuildTest, "StoryAssetBuild.DefaultVolumeSkipsPoolSource")
+bool FProsettaDashboardDefaultVolumeBuildTest::RunTest(const FString&)
+{
+ // A multi-volume mirror has no canonical story, and concatenated/source.ink is the whole pool, not the
+ // default volume's source: an empty volume request must build the default volume's compiled story only.
+ const FString Root = TransientDir(TEXT("DefaultVolumeBuild"));
+ const FString PackageName = TEXT("/Game/ProsettaBuildTests/T") + FGuid::NewGuid().ToString(EGuidFormats::Digits) + TEXT("/Story");
+ FProsettaStoryAssetBuildResult Result;
+ ON_SCOPE_EXIT
+ {
+  if (UObject* Asset = FindObject<UObject>(nullptr, *Result.ObjectPath))
+  {
+   Asset->GetOutermost()->SetDirtyFlag(false);
+   Asset->ClearFlags(RF_Public | RF_Standalone);
+   Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+  }
+  IFileManager::Get().DeleteDirectory(*Root, false, true);
+ };
+ FProsettaStoryAssetBuildOptions Options;
+ Options.MirrorRoot = Root / TEXT("Mirror");
+ Options.StageDir = Root / TEXT("Stage");
+ Options.AssetPath = PackageName;
+ Options.bImportPresentation = false;
+ Options.bSave = false;
+ FFileHelper::SaveStringToFile(TEXT(R"JSON({"schemaVersion":2,"projectId":151,
+  "scope":{"canonical":"early-access-build,main","volumes":[
+   {"slug":"early-access-build","isDefault":false,"compiledStoryArtifactKey":"compiled-story:early-access-build"},
+   {"slug":"main","isDefault":true,"compiledStoryArtifactKey":"compiled-story:main"}]},
+  "artifacts":[{"key":"compiled-story:early-access-build","relativePath":"compiled/early-access-build/story.json","checksum":"aaaa"},
+   {"key":"compiled-story:main","relativePath":"compiled/main/story.json","checksum":"bbbb"},
+   {"key":"concatenated-source","relativePath":"concatenated/source.ink","checksum":"cccc"},
+   {"key":"lines","relativePath":"lines/lines.json","checksum":"dddd"}]})JSON"), *(Options.MirrorRoot / TEXT("manifest.json")));
+ const FString MainStory = Options.MirrorRoot / TEXT("compiled/main/story.json");
+ FFileHelper::SaveStringToFile(TEXT("{\"inkVersion\":21,\"root\":[\"done\",null],\"listDefs\":{}}"), *MainStory);
+ FFileHelper::SaveStringToFile(TEXT("{\"lines\":[]}"), *(Options.MirrorRoot / TEXT("lines/lines.json")));
+ FFileHelper::SaveStringToFile(TEXT("== pool_only ==\nNot the main volume.\n-> DONE\n"), *(Options.MirrorRoot / TEXT("concatenated/source.ink")));
+ Result = RebuildProsettaStoryAsset(Options);
+ if (!TestTrue(TEXT("default volume builds"), Result.bSucceeded)) { AddInfo(Result.Error); return false; }
+ TestEqual(TEXT("default volume's compiled story is used"), FPaths::ConvertRelativePathToFull(Result.CompiledStoryPath), FPaths::ConvertRelativePathToFull(MainStory));
+ TestTrue(TEXT("compiled flow, not the pool source"), Result.StagedPath.EndsWith(TEXT(".ink.json")));
+ return true;
+}
+
 // ------------------------------------------------------------------ model
 
 namespace

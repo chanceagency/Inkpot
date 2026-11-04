@@ -53,7 +53,11 @@ struct INKPOT_API FProsettaResolvedStoryPaths
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString LinesPath;
 	/** Folder holding localization.json and the per-language CSVs for this source. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString LocalizationFolder;
-	/** Slug the paths belong to; empty for the canonical files. */
+	/**
+	 * Slug the paths belong to. An empty request reports the single scoped volume, or the default
+	 * volume it resolved to (bDefaultVolume); empty for an unnamed canonical story or when no
+	 * volume's files could be resolved.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString VolumeSlug;
 	/** Tag the manifest records for that volume, when it lists one. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString VolumeTag;
@@ -61,7 +65,9 @@ struct INKPOT_API FProsettaResolvedStoryPaths
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") bool bFromManifest = false;
 	/** A volume was requested but the mirror has no files for it, so the canonical story is used. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") bool bFellBackToCanonical = false;
-	/** Why the fallback happened, for logs and the dashboard. */
+	/** An empty request followed the manifest's default volume because the mirror has no canonical story. */
+	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") bool bDefaultVolume = false;
+	/** Why the fallback, ambiguity or default choice needs attention, for logs and the dashboard. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString Note;
 
 	/** True when the compiled story and the lines file both exist on disk. */
@@ -103,13 +109,14 @@ namespace ProsettaStorySource
 	INKPOT_API FProsettaResolvedStoryPaths CanonicalPaths(const FString& MirrorRoot);
 	/**
 	 * Resolves the files for VolumeSlug from an already parsed manifest. Manifest driven only:
+	 * an empty request follows the declared default when there is no canonical artifact;
 	 * a volume maps through the scope's artifact keys, then `compiled-story:<slug>`, then the
 	 * canonical files when the manifest's scope is that single volume. Any other volume request
 	 * falls back to the canonical files with bFellBackToCanonical set. Paths are never derived
 	 * from a `volumes/<slug>/...` pattern. Returns false on a fallback.
 	 */
 	INKPOT_API bool ResolveStoryPathsFromManifest(const FProsettaManifestSummary& Manifest, const FString& MirrorRoot, const FString& VolumeSlug, FProsettaResolvedStoryPaths& Out);
-	/** Loads <MirrorRoot>/manifest.json and resolves; without a manifest the canonical layout is assumed (a fallback when a volume was asked for). Logs a warning on a fallback. */
+	/** Loads <MirrorRoot>/manifest.json and resolves; without a manifest the canonical layout is assumed (a fallback when a volume was asked for). Logs a warning whenever it sets Note. */
 	INKPOT_API bool ResolveStoryPaths(const FString& MirrorRoot, const FString& VolumeSlug, FProsettaResolvedStoryPaths& Out);
 	/** The first valid actor in World that implements IProsettaStorySourceHost, or null. */
 	INKPOT_API AActor* FindHost(const UWorld* World);

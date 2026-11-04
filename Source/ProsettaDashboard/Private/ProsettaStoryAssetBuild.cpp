@@ -161,7 +161,9 @@ FProsettaStoryAssetBuildResult RebuildProsettaStoryAsset(const FProsettaStoryAss
 	// Inputs: explicit paths win, otherwise the manifest decides where the volume's files are.
 	FProsettaResolvedStoryPaths Resolved;
 	ProsettaStorySource::ResolveStoryPaths(Options.MirrorRoot, Options.VolumeSlug, Resolved);
-	if (!Options.VolumeSlug.IsEmpty() && Resolved.bFellBackToCanonical && Options.CompiledStoryPath.IsEmpty())
+	// A manifest-defaulted volume builds like a requested one: the pool source is not its source.
+	const bool bVolumeStory = !Options.VolumeSlug.IsEmpty() || Resolved.bDefaultVolume;
+	if (bVolumeStory && Resolved.bFellBackToCanonical && Options.CompiledStoryPath.IsEmpty())
 	{
 		Result.Error = TEXT("Cannot rebuild: ") + Resolved.Note;
 		return Result;
@@ -174,7 +176,7 @@ FProsettaStoryAssetBuildResult RebuildProsettaStoryAsset(const FProsettaStoryAss
 		Options.CompiledStoryPath = Resolved.CompiledStoryPath;
 	}
 	if (Options.LinesPath.IsEmpty()) { Options.LinesPath = Resolved.LinesPath; }
-	if (Options.SourceInkPath.IsEmpty() && Options.VolumeSlug.IsEmpty() && FPaths::FileExists(Concatenated)) { Options.SourceInkPath = Concatenated; }
+	if (Options.SourceInkPath.IsEmpty() && !bVolumeStory && FPaths::FileExists(Concatenated)) { Options.SourceInkPath = Concatenated; }
 	if (!Options.CompiledStoryPath.IsEmpty()) { Options.CompiledStoryPath = FPaths::ConvertRelativePathToFull(Options.CompiledStoryPath); }
 	Options.LinesPath = FPaths::ConvertRelativePathToFull(Options.LinesPath);
 	if (!Options.SourceInkPath.IsEmpty()) { Options.SourceInkPath = FPaths::ConvertRelativePathToFull(Options.SourceInkPath); }

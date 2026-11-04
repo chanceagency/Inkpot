@@ -81,9 +81,17 @@ bool FProsettaStorySourceForWorldDefaultTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("describe"), Source.Describe(), FString(TEXT("canonical")));
 	TestEqual(TEXT("null world is canonical"), ProsettaStorySource::ForWorld(nullptr).Describe(), FString(TEXT("canonical")));
 
-	// The default source resolves to exactly the canonical story so existing levels keep playing the same file.
-	const FString Expected = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Prosetta"), TEXT("compiled"), TEXT("story.json"));
-	TestEqual(TEXT("compiled story path"), ProsettaStorySource::CompiledStoryPathForWorld(W.World), Expected);
+	// Exercise the no-manifest layout in an isolated fixture. The checkout's live
+	// mirror can validly be a multi-volume export with no canonical artifact.
+	FScratchMirror Mirror(TEXT("DefaultWorldNoManifest"));
+	FProsettaResolvedStoryPaths Paths;
+	TestTrue(TEXT("default world source resolves without a manifest"), ProsettaStorySource::ResolveStoryPaths(Mirror.Root, Source.VolumeSlug, Paths));
+	const FString Expected = FPaths::Combine(Mirror.Root, TEXT("compiled"), TEXT("story.json"));
+	TestEqual(TEXT("canonical compiled story path without a manifest"), Paths.CompiledStoryPath, Expected);
+	// CompiledStoryPathForWorld resolves the default source against the project's mirror, whatever it holds.
+	FProsettaResolvedStoryPaths Live;
+	ProsettaStorySource::ResolveStoryPaths(ProsettaStorySource::MirrorRoot(), Source.VolumeSlug, Live);
+	TestEqual(TEXT("world path follows the mirror's resolution"), ProsettaStorySource::CompiledStoryPathForWorld(W.World), Live.CompiledStoryPath);
 	return true;
 }
 
@@ -139,6 +147,59 @@ bool FProsettaStorySourcePathsVolumePresentTest::RunTest(const FString& Paramete
 	TestEqual(TEXT("canonical story"), Canonical.CompiledStoryPath, FString(TEXT("/mirror/compiled/story.json")));
 	TestTrue(TEXT("canonical has no slug in a multi-volume scope"), Canonical.VolumeSlug.IsEmpty());
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaStorySourcePathsDefaultVolumeTest, "Inkpot.Prosetta.StorySource.Paths.DefaultVolumeWithoutCanonical",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProsettaStorySourcePathsDefaultVolumeTest::RunTest(const FString& Parameters)
+{
+ const TCHAR* JSON = TEXT(R"JSON({"schemaVersion":2,"projectId":151,
+  "scope":{"canonical":"early-access-build,main","volumes":[
+   {"slug":"early-access-build","isDefault":false,"compiledStoryArtifactKey":"compiled-story:early-access-build"},
+   {"slug":"main","isDefault":true,"compiledStoryArtifactKey":"compiled-story:main"}]},
+  "artifacts":[{"key":"compiled-story:early-access-build","relativePath":"compiled/early-access-build/story.json","checksum":"aaaa"},
+   {"key":"compiled-story:main","relativePath":"compiled/main/story.json","checksum":"bbbb"},
+   {"key":"lines","relativePath":"lines/lines.json","checksum":"cccc"}]})JSON");
+ FScratchMirror Mirror(TEXT("DefaultVolumeWithoutCanonical"));
+ Mirror.Write(TEXT("manifest.json"), JSON);
+ Mirror.Write(TEXT("compiled/main/story.json"), TEXT("current main story"));
+ Mirror.Write(TEXT("lines/lines.json"), TEXT("{}"));
+ FProsettaResolvedStoryPaths Paths;
+ TestTrue(TEXT("canonical request resolves the declared default from the real mirror layout"), ProsettaStorySource::ResolveStoryPaths(Mirror.Root, TEXT(""), Paths));
+ TestEqual(TEXT("main chosen even when another volume sorts first"), Paths.VolumeSlug, FString(TEXT("main")));
+ TestEqual(TEXT("uses manifest story path"), Paths.CompiledStoryPath, Mirror.Root / TEXT("compiled/main/story.json"));
+ TestTrue(TEXT("resolved live files exist without a canonical file"), Paths.IsComplete());
+ TestFalse(TEXT("default volume is not an unavailable-volume fallback"), Paths.bFellBackToCanonical);
+ TestTrue(TEXT("default volume is marked as followed"), Paths.bDefaultVolume);
+ TestTrue(TEXT("a single declared default needs no note"), Paths.Note.IsEmpty());
+ FProsettaManifestSummary Manifest;
+ if (!TestTrue(TEXT("manifest parses"), UProsettaSyncInspector::ParseManifest(JSON, Manifest))) { return false; }
+ Manifest.ScopeDetail.Volumes[1].bIsDefault = false;
+ TestFalse(TEXT("an ambiguous mirror requires a volume instead of choosing its first story"), ProsettaStorySource::ResolveStoryPathsFromManifest(Manifest, Mirror.Root, TEXT(""), Paths));
+ TestTrue(TEXT("ambiguity explains how to select a volume"), Paths.Note.Contains(TEXT("select the level's volume")));
+ TestFalse(TEXT("ambiguity is not a default choice"), Paths.bDefaultVolume);
+ // Several declared defaults: the first is played, and the note says so.
+ FProsettaManifestSummary TwoDefaults = Manifest;
+ TwoDefaults.ScopeDetail.Volumes[0].bIsDefault = true;
+ TwoDefaults.ScopeDetail.Volumes[1].bIsDefault = true;
+ TwoDefaults.ScopeDetail.Volumes.Swap(0, 1);
+ TestTrue(TEXT("several defaults still resolve"), ProsettaStorySource::ResolveStoryPathsFromManifest(TwoDefaults, Mirror.Root, TEXT(""), Paths));
+ TestEqual(TEXT("first declared default played"), Paths.VolumeSlug, FString(TEXT("main")));
+ TestTrue(TEXT("several defaults are reported"), Paths.Note.Contains(TEXT("marks 2 volumes as default")));
+ // The declared default has no compiled story and there is no canonical one: say so, not "playing the canonical story".
+ FProsettaManifestSummary MissingDefault = Manifest;
+ MissingDefault.ScopeDetail.Volumes[0].Slug = TEXT("unsynced");
+ MissingDefault.ScopeDetail.Volumes[0].CompiledStoryArtifactKey.Reset();
+ MissingDefault.ScopeDetail.Volumes[0].bIsDefault = true;
+ TestFalse(TEXT("missing default artifact does not resolve"), ProsettaStorySource::ResolveStoryPathsFromManifest(MissingDefault, Mirror.Root, TEXT(""), Paths));
+ TestTrue(TEXT("missing default is flagged"), Paths.bFellBackToCanonical && Paths.bDefaultVolume);
+ TestTrue(TEXT("missing default names the volume"), Paths.Note.Contains(TEXT("default volume 'unsynced' has no compiled story artifact")));
+ TestFalse(TEXT("missing default does not promise a canonical story"), Paths.Note.Contains(TEXT("playing the canonical story")));
+ Manifest.ScopeDetail.Volumes.RemoveAt(0);
+ TestTrue(TEXT("a single per-volume artifact resolves without an isDefault field"), ProsettaStorySource::ResolveStoryPathsFromManifest(Manifest, Mirror.Root, TEXT(""), Paths));
+ TestEqual(TEXT("single-volume artifact remains selected"), Paths.CompiledStoryPath, Mirror.Root / TEXT("compiled/main/story.json"));
+ TestTrue(TEXT("single volume followed as the default"), Paths.bDefaultVolume);
+ return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaStorySourcePathsVolumeAbsentTest, "Inkpot.Prosetta.StorySource.Paths.VolumeAbsent",

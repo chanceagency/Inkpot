@@ -26,6 +26,8 @@ struct INKPOT_API FProsettaScopeVolumeEntry
 {
 	GENERATED_BODY()
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Sync") FString Slug;
+	/** The project default volume, used when a multi-volume mirror has no canonical story. */
+	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Sync") bool bIsDefault = false;
 	/** Release tag, empty when the volume follows live. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Sync") FString Tag;
 	/** Artifact keys the manifest names for this volume; empty means the conventional `<kind>:<slug>` key or the canonical file. */
