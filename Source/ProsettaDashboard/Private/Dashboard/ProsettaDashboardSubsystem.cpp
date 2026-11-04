@@ -87,6 +87,7 @@ void UProsettaDashboardSubsystem::Deinitialize()
 		FDirectoryWatcherModule& Module = FModuleManager::GetModuleChecked<FDirectoryWatcherModule>("DirectoryWatcher");
 		if (IDirectoryWatcher* Watcher = Module.Get()) { Watcher->UnregisterDirectoryChangedCallback_Handle(WatchedDirectory, DirectoryWatchHandle); }
 	}
+	ProsettaStorySource::SetEditorMirrorRoot(FString(), FString());
 	Model.Reset();
 	Super::Deinitialize();
 }
@@ -129,7 +130,7 @@ FProsettaDashboardModelDeps UProsettaDashboardSubsystem::BuildDeps()
 	{
 		if (!Settings->DefaultProfileName.IsEmpty()) { Deps.DefaultProfileName = Settings->DefaultProfileName; }
 	}
-	Deps.MirrorRoot = ProsettaStorySource::MirrorRoot();
+	Deps.MirrorRoot = ProsettaStorySource::DefaultMirrorRoot();
 	Deps.SafeToApply = [] { return UProsettaWatchSubsystem::IsSafeToApply(); };
 	Deps.IsPIE = [] { return GEditor && GEditor->PlayWorld != nullptr; };
 	Deps.StartWatch = [](const FProsettaSyncProfile& Profile)
@@ -180,6 +181,8 @@ FProsettaDashboardPollInput UProsettaDashboardSubsystem::BuildPollInput() const
 bool UProsettaDashboardSubsystem::Tick(float)
 {
 	if (!Model || bSuspendPolling) { return true; }
+	RefreshReleasedSource();
+	EnsureManifestWatcher();
 	if (Model->GetState().IsBusy()) { LastOwnRunSeconds = FPlatformTime::Seconds(); }
 	if (bManifestChangeQueued && LastManifestChangeSeconds - LastOwnRunSeconds < OwnRunGraceSeconds)
 	{
@@ -212,15 +215,26 @@ bool UProsettaDashboardSubsystem::Tick(float)
 		*ItemBox = Added;
 		if (Added) { Added->SetCompletionState(SNotificationItem::CS_Pending); }
 	}
-	if (!DirectoryWatchHandle.IsValid()) { EnsureManifestWatcher(); }
 	Model->Poll(BuildPollInput());
 	return true;
 }
 
 void UProsettaDashboardSubsystem::EnsureManifestWatcher()
 {
-	if (DirectoryWatchHandle.IsValid() || IsRunningCommandlet()) { return; }
+	if (IsRunningCommandlet()) { return; }
 	const FString Directory = ProsettaStorySource::MirrorRoot();
+	const bool bReleased = Model && Model->GetState().Profile.Mode == EProsettaSyncMode::Watch && Model->GetState().Profile.Channel == EProsettaWatchChannel::LatestRelease;
+	if (DirectoryWatchHandle.IsValid())
+	{
+		if (!bReleased && WatchedDirectory == Directory) { return; }
+		if (FDirectoryWatcherModule* Module = FModuleManager::GetModulePtr<FDirectoryWatcherModule>(TEXT("DirectoryWatcher")))
+			if (IDirectoryWatcher* Watcher = Module->Get()) { Watcher->UnregisterDirectoryChangedCallback_Handle(WatchedDirectory, DirectoryWatchHandle); }
+		DirectoryWatchHandle.Reset();
+		WatchedDirectory.Empty();
+	}
+	// Immutable releases change only through accepted receipts. Live mirror saves
+	// must not produce an external-change prompt while this profile follows tags.
+	if (bReleased) { return; }
 	if (!IFileManager::Get().DirectoryExists(*Directory)) { return; }
 	FDirectoryWatcherModule& Module = FModuleManager::LoadModuleChecked<FDirectoryWatcherModule>("DirectoryWatcher");
 	IDirectoryWatcher* Watcher = Module.Get();
@@ -243,9 +257,83 @@ void UProsettaDashboardSubsystem::HandleDirectoryChanged(const TArray<FFileChang
 	}
 }
 
+void UProsettaDashboardSubsystem::ClearReleasedSource()
+{
+	if (ActiveReleaseScope.IsEmpty()) { return; }
+	ProsettaStorySource::SetEditorMirrorRoot(FString(), FString());
+	if (Model && !LiveMirrorRoot.IsEmpty()) { Model->SetMirrorRoot(LiveMirrorRoot); }
+	ActiveReleaseScope.Empty();
+	ActiveReleasePublishedAt.Empty();
+	ActiveReleaseGenerationId.Empty();
+	bManifestChangeQueued = false;
+}
+
+bool UProsettaDashboardSubsystem::AdoptReleasedSource(const UProsettaGenerationAsset& Generation)
+{
+	const FProsettaDashboardState& State = Model->GetState();
+	const FProsettaSyncProfile& Profile = State.Profile;
+	if (Profile.Mode != EProsettaSyncMode::Watch || Profile.Channel != EProsettaWatchChannel::LatestRelease || Profile.Volumes.Num() != 1 || Profile.Volumes[0].IsFixedTag()) { return false; }
+	const int32 Project = FCString::Atoi(*(Profile.ProjectId.IsEmpty() ? State.Credentials.ProjectId : Profile.ProjectId));
+	const FString Scope = Profile.Volumes[0].Slug + TEXT("@latest-release");
+	TSharedPtr<FJsonObject> Event;
+	FString Channel, EventScope, Root, ManifestPath, Id, PublishedAt;
+	int32 EventProject = 0;
+	const TSharedPtr<FJsonObject>* Release;
+	if (Project <= 0 || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Generation.Provenance), Event) || !Event ||
+		!Event->TryGetNumberField(TEXT("projectId"), EventProject) || EventProject != Project ||
+		!Event->TryGetStringField(TEXT("channel"), Channel) || Channel != TEXT("latest-release") ||
+		!Event->TryGetStringField(TEXT("scope"), EventScope) || EventScope != Scope ||
+		!Event->TryGetStringField(TEXT("generationId"), Id) || Id != Generation.GenerationId ||
+		!Event->TryGetStringField(TEXT("generationPath"), Root) || FPaths::IsRelative(Root) ||
+		!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath) || ManifestPath != Root / TEXT("manifest.json") ||
+		!Event->TryGetObjectField(TEXT("release"), Release) || !(*Release)->TryGetStringField(TEXT("publishedAt"), PublishedAt)) { return false; }
+	const FString Selection = FString::FromInt(Project) + TEXT("/") + Scope;
+	if (ActiveReleaseScope == Selection && !ActiveReleasePublishedAt.IsEmpty() && PublishedAt < ActiveReleasePublishedAt) { return false; }
+	FProsettaManifestSummary Manifest;
+	if (!UProsettaSyncInspector::LoadManifestFile(ManifestPath, Manifest) || Manifest.ProjectId != Project ||
+		Manifest.GenerationId != Id || !Manifest.ScopeDetail.FindVolume(Profile.Volumes[0].Slug)) { return false; }
+	if (LiveMirrorRoot.IsEmpty()) { LiveMirrorRoot = Model->GetDeps().MirrorRoot; }
+	ActiveReleaseScope = Selection;
+	ActiveReleasePublishedAt = PublishedAt;
+	ActiveReleaseGenerationId = Id;
+	ProsettaStorySource::SetEditorMirrorRoot(Root, Profile.Volumes[0].Slug);
+	Model->SetMirrorRoot(Root);
+	return true;
+}
+
+void UProsettaDashboardSubsystem::RefreshReleasedSource()
+{
+	const FProsettaDashboardState& State = Model->GetState();
+	const FProsettaSyncProfile& Profile = State.Profile;
+	const int32 Project = FCString::Atoi(*(Profile.ProjectId.IsEmpty() ? State.Credentials.ProjectId : Profile.ProjectId));
+	const FString Scope = Profile.Volumes.Num() == 1 && !Profile.Volumes[0].IsFixedTag() ? Profile.Volumes[0].Slug + TEXT("@latest-release") : FString();
+	if (Profile.Mode != EProsettaSyncMode::Watch || Profile.Channel != EProsettaWatchChannel::LatestRelease || Project <= 0 || Scope.IsEmpty())
+	{
+		ClearReleasedSource();
+		return;
+	}
+	if (!ActiveReleaseScope.IsEmpty() && ActiveReleaseScope != FString::FromInt(Project) + TEXT("/") + Scope) { ClearReleasedSource(); }
+	// Receipt dedup intentionally does not re-accept an existing registry after restart.
+	// Restore that accepted source explicitly; never promote a downloaded/queued generation.
+	if (UProsettaWatchSubsystem* Watch = GEditor ? GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>() : nullptr)
+	{
+		if (const UProsettaGenerationAsset* Accepted = Watch->FindAcceptedGeneration(Project, TEXT("latest-release"), Scope))
+		{
+			if (ActiveReleaseGenerationId != Accepted->GenerationId) { HandleGenerationAccepted(*Accepted); }
+		}
+	}
+}
+
 void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenerationAsset& Generation)
 {
 	if (!Model || bSuspendPolling) { return; }
+	if (Model->GetState().Profile.Channel == EProsettaWatchChannel::LatestRelease)
+	{
+		if (!AdoptReleasedSource(Generation)) { return; }
+		bManifestChangeQueued = false;
+		Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);
+		return;
+	}
 	// The broadcast is global: other importers/scopes (including automation fixtures)
 	// must not rebuild this dashboard's mirror or run its presentation importer.
 	FProsettaManifestSummary Manifest;
@@ -271,7 +359,7 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 	Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);
 }
 
-void UProsettaDashboardSubsystem::HandlePreBeginPIE(bool) { if (Model) { Model->Poll(BuildPollInput()); } }
+void UProsettaDashboardSubsystem::HandlePreBeginPIE(bool) { if (Model) { RefreshReleasedSource(); Model->Poll(BuildPollInput()); } }
 void UProsettaDashboardSubsystem::HandleEndPIE(bool) { if (Model) { Model->Poll(BuildPollInput()); } }
 void UProsettaDashboardSubsystem::HandleMapOpened(const FString&, bool) { if (Model) { Model->Poll(BuildPollInput()); } }
 

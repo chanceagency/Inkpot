@@ -34,7 +34,7 @@ FString ProsettaDefaultStoryAssetPath()
 
 FString ProsettaVolumeAssetPath(const FString& Slug)
 {
-	return FString::Printf(TEXT("/Game/Prosetta/Volumes/%s/Story"), *Slug);
+	return ProsettaStorySource::VolumeStoryAssetPath(Slug);
 }
 
 bool SplitProsettaAssetPath(const FString& InAssetPath, FString& OutPackagePath, FString& OutAssetName)
