@@ -80,7 +80,8 @@ the live UE 5.8 audio-import crash found during watched voice QA.
 `Inkpot.Prosetta.WatchReceiptRecovery` atomically replaces a receipt, suppresses
 the notification hint and advances the bounded reconciliation interval. It checks
 that the new story and WAV samples enter the verified importer, Play still defers
-application, and repeated scans do not replay unchanged receipts. The two-second
-fallback scans only sanitized completion receipts, never the network or individual
-mirror files. Live QA reproduced a new mirror and receipt remaining unapplied
+application, and repeated scans do not replay unchanged receipts or re-offer a
+rejected one, so a rejected receipt cannot retake the transport or overwrite the
+importer's status. The two-second (`ReceiptScanIntervalSeconds`) fallback scans
+only sanitized completion receipts, never the network or individual mirror files. Live QA reproduced a new mirror and receipt remaining unapplied
 with an empty importer queue until this gap was identified.

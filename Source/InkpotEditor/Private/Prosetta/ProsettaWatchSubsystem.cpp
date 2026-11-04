@@ -593,6 +593,9 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
  struct FBackup { TObjectPtr<UObject> Asset; TArray<uint8> Memory, File; FString Filename; bool bHadFile = false; TStrongObjectPtr<USoundWave> Audio; };
  TArray<FBackup> backups;
  TArray<UObject*> created;
+ // Factory voices moved under a supporting artifact; rollback returns them to the transient package
+ // so a rejected generation leaves no unowned Take_ subobject behind in a restored artifact.
+ TArray<USoundWave*> adopted;
  auto backup = [&backups](UObject* Asset)
  {
   FBackup item;
@@ -619,8 +622,14 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
    if (UInkpotStoryAsset* story = Cast<UInkpotStoryAsset>(pair.Value)) if (story->GetAssetImportData()) backup(story->GetAssetImportData());
   }
  }
- auto rollback = [&backups, &created, &OutError]()
+ auto rollback = [&backups, &created, &adopted, &OutError]()
  {
+  for (USoundWave* wave : adopted)
+  {
+   wave->ClearFlags(RF_Public);
+   wave->SetFlags(RF_Transient);
+   wave->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+  }
   for (FBackup& item : backups)
   {
    FObjectReader reader(item.Asset, item.Memory);
@@ -689,6 +698,7 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
      wave = candidate.Audio.Get();
      if (!wave->Rename(*soundName, supporting, REN_DontCreateRedirectors | REN_NonTransactional))
      { OutError = TEXT("Could not adopt imported voice: ") + candidate.Key; rollback(); return false; }
+     adopted.Add(wave);
     }
     supporting->Audio = wave;
     supporting->Audio->ClearFlags(RF_Transient);

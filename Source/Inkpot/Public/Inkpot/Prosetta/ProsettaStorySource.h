@@ -61,7 +61,9 @@ struct INKPOT_API FProsettaResolvedStoryPaths
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") bool bFromManifest = false;
 	/** A volume was requested but the mirror has no files for it, so the canonical story is used. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") bool bFellBackToCanonical = false;
-	/** Why the fallback happened, for logs and the dashboard. */
+	/** An empty request followed the manifest's default volume because the mirror has no canonical story. */
+	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") bool bDefaultVolume = false;
+	/** Why the fallback, ambiguity or default choice needs attention, for logs and the dashboard. */
 	UPROPERTY(BlueprintReadOnly, Category="Prosetta|Story") FString Note;
 
 	/** True when the compiled story and the lines file both exist on disk. */
@@ -110,7 +112,7 @@ namespace ProsettaStorySource
 	 * from a `volumes/<slug>/...` pattern. Returns false on a fallback.
 	 */
 	INKPOT_API bool ResolveStoryPathsFromManifest(const FProsettaManifestSummary& Manifest, const FString& MirrorRoot, const FString& VolumeSlug, FProsettaResolvedStoryPaths& Out);
-	/** Loads <MirrorRoot>/manifest.json and resolves; without a manifest the canonical layout is assumed (a fallback when a volume was asked for). Logs a warning on a fallback. */
+	/** Loads <MirrorRoot>/manifest.json and resolves; without a manifest the canonical layout is assumed (a fallback when a volume was asked for). Logs a warning whenever it sets Note. */
 	INKPOT_API bool ResolveStoryPaths(const FString& MirrorRoot, const FString& VolumeSlug, FProsettaResolvedStoryPaths& Out);
 	/** The first valid actor in World that implements IProsettaStorySourceHost, or null. */
 	INKPOT_API AActor* FindHost(const UWorld* World);

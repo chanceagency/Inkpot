@@ -759,10 +759,11 @@ bool FProsettaWatchReceiptRecoveryTest::RunTest(const FString&)
  Receipts.LastReceiptScanSeconds = 0.; // Deterministic elapsed interval, no sleeps or OS delivery assumptions.
  Receipts.Tick(0.f);
  TestEqual(TEXT("missed notification still queues the new generation"), Watch->GetPendingCount(), 1);
- UWorld* PreviousWorld = GEditor->PlayWorld;
- GEditor->PlayWorld = NewObject<UWorld>();
- TestFalse(TEXT("recovered receipt still defers during Play"), Watch->TryApplyPending());
- GEditor->PlayWorld = PreviousWorld;
+ {
+  // Restored even when the check fails, so a failure cannot leave the editor in a fake Play session.
+  TGuardValue<decltype(GEditor->PlayWorld)> Play(GEditor->PlayWorld, NewObject<UWorld>());
+  TestFalse(TEXT("recovered receipt still defers during Play"), Watch->TryApplyPending());
+ }
  if (!TestTrue(TEXT("recovered receipt imports when safe"), Watch->TryApplyPending())) return false;
  UProsettaGenerationAsset* Registry = State(Second);
  if (!TestNotNull(TEXT("recovered registry"), Registry)) return false;
@@ -780,6 +781,25 @@ bool FProsettaWatchReceiptRecoveryTest::RunTest(const FString&)
  Receipts.LastReceiptScanSeconds = 0.;
  Receipts.Tick(0.f);
  TestEqual(TEXT("unchanged receipts are not replayed by periodic reconciliation"), Watch->GetPendingCount(), 0);
+ // A rejected receipt is not offered again until its content changes: re-offering it would retake the
+ // transport from a plugin-owned CLI and overwrite the importer's status every interval.
+ const FString Rejected = Directory / TEXT("rejected.json");
+ TestTrue(TEXT("invalid completion written"), FFileHelper::SaveStringToFile(TEXT(R"({"schemaVersion":1,"type":"generation-completed"})"), *Rejected));
+ Receipts.bChangesPending = true;
+ Receipts.Tick(0.f);
+ const FString RejectedStatus = TEXT("Rejected invalid completed generation identity.");
+ TestEqual(TEXT("invalid completion is rejected by the importer"), Watch->GetStatus(), RejectedStatus);
+ Watch->StopWatch();
+ const FString StoppedStatus = Watch->GetStatus();
+ Receipts.bChangesPending = false;
+ Receipts.LastReceiptScanSeconds = 0.;
+ Receipts.Tick(0.f);
+ TestEqual(TEXT("rejected receipt is not offered again by reconciliation"), Watch->GetStatus(), StoppedStatus);
+ TestTrue(TEXT("changed rejected receipt written"), FFileHelper::SaveStringToFile(TEXT(R"({"schemaVersion":1,"type":"generation-completed","scope":"changed"})"), *Rejected));
+ Receipts.bChangesPending = false;
+ Receipts.LastReceiptScanSeconds = 0.;
+ Receipts.Tick(0.f);
+ TestEqual(TEXT("changed receipt content is offered again"), Watch->GetStatus(), RejectedStatus);
  return true;
 }
 
