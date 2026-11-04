@@ -57,6 +57,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	const TArray<FString> &GetTags() const;
 
+	/**
+	 * GetInheritedTags
+	 * Text-only tags at the top of the knot and stitch the line's text came from, outermost first.
+	 * Weave gathers and choices are not scopes. A snapshot, so it survives flow changes.
+	 */
+	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
+	const TArray<FString>& GetInheritedTags() const { return InheritedTags; }
+	void SetInheritedTags(TArray<FString> InTags) { InheritedTags = MoveTemp(InTags); }
+
 	UFUNCTION(BlueprintPure, Category="Inkpot|Line")
 	UInkpotStory* GetStory() const;
 
@@ -81,6 +90,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category="Inkpot|Line")
 	TArray<FString> Tags;
+
+	UPROPERTY(VisibleAnywhere, Category="Inkpot|Line")
+	TArray<FString> InheritedTags;
 
 	UPROPERTY(VisibleAnywhere, Category = "Inkpot|Line")
 	bool bIsDirty;

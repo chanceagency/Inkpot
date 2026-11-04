@@ -572,3 +572,39 @@ Watch follow-up (1.54.24): editor focus no longer prevents automatic application
 the quiet interval and PIE/save safety checks still apply. When one-shot sync
 removes the generation marker, presentation rebuild ownership is checked against
 the complete accepted artifact set, including audio, before rebuilding.
+
+### Scene speakers and native spatial voices
+
+`UProsettaSpeakerRegistry` is a cookable character catalog projected from Engine
+Sync `characters/characters.json`. An importer can subclass it to carry the
+project's presentation data. `LoadCharactersJSON` validates project and character
+IDs and replaces the catalog atomically. No runtime API credentials are needed.
+
+Add a **Prosetta Speaker** component to any scene actor. Assign its imported
+**Speaker Registry**, then choose **Speaker** from the synced shortnames. The
+component retains the project/character IDs, so a character rename preserves the
+mapping. Changing registries clears the selection. Move/attach the component to
+the intended voice origin or a mesh socket. `Resolve` chooses a matching active
+conversation actor, then the nearest matching source to the player's audio
+listener (stable object path breaks ties). Cross-project IDs never match.
+
+`CreateVoice` returns a stopped native `UAudioComponent` attached to that origin.
+Bind completion before calling `Play`, and stop/destroy it when presentation ends.
+The component follows actor movement and stops when its owner is destroyed.
+Default attenuation uses Unreal panning, a 1 m inner radius, 24 m falloff, natural
+sound attenuation to -48 dB, and mild visibility-channel occlusion (2.5 kHz,
+65% volume, 150 ms smoothing). Edit the standard attenuation overrides or assign
+a shared `USoundAttenuation` asset. Stereo source channels use zero spread and
+normalization; mono voice recordings also pan across stereo output. This path
+requires no spatialization plugin. It does not simulate acoustic reflections.
+
+**Voice Policy** defaults to Interrupt. Presenters can resolve boolean Ink tags
+with `FProsettaVoicePolicyTags`: `#interrupt`, `#overlap`, `#queue`. Apply the
+speaker default, `UInkpotLine::GetInheritedTags()` (outer knot to inner stitch),
+then `GetTags()` (the line). Last recognized tag within a scope wins. Inherited
+tags are the text-only tags at the top of the knot and stitch the emitted text
+came from (weave gathers and choices are not scopes; dynamic tags are skipped),
+captured with the line so they survive flow switches and deferred presentation. Presenters own scheduling: InkpotSandbox
+implements interrupt, overlapping previous voices, and queued subtitle/audio
+presentation. The speaker identity and policy types are independent of a future
+Wwise playback backend.

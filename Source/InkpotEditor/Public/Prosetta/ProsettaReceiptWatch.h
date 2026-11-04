@@ -17,8 +17,10 @@ struct FFileChangeData;
  * Unreal's DirectoryWatcher callback only raises a flag; receipts are read on the core ticker and
  * passed to UProsettaWatchSubsystem::ConsumeEvent on the game thread, so manifest verification, Play
  * deferral and replay rejection stay in the importer. Each receipt is handed off once per content,
- * a receipt ConsumeEvent rejects is offered again on the next change, and receipts already present
- * when the watch is created are handed off once. A receipt whose generation the importer already has
+ * a receipt ConsumeEvent rejects is offered again only once its content changes, and receipts
+ * already present when the watch is created are handed off once. A reconciliation scan every
+ * ReceiptScanIntervalSeconds recovers notifications missed by the OS; it never polls Prosetta or
+ * watches individual mirror files. A receipt whose generation the importer already has
  * ( IsGenerationCurrent ) is recorded without a hand-off. Handing off a new generation calls
  * ConfigureExternalWatch with ResolveDecoder whenever the importer does not have it yet, including
  * after StartWatch took the transport back, so it stops a plugin-owned CLI watch. A receipt accepted
@@ -37,6 +39,8 @@ public:
   * ( null for WAV-only projects ). GetImporter defaults to the editor's UProsettaWatchSubsystem.
   */
  FProsettaReceiptWatch(const FString& Directory, FProsettaDecoderResolver ResolveDecoder, FImporterGetter GetImporter = nullptr);
+ /** Bounded receipt-only reconciliation interval for notifications the OS drops or coalesces. */
+ static constexpr double ReceiptScanIntervalSeconds = 2.;
  ~FProsettaReceiptWatch();
  FProsettaReceiptWatch(const FProsettaReceiptWatch&) = delete;
  FProsettaReceiptWatch& operator=(const FProsettaReceiptWatch&) = delete;
@@ -62,16 +66,25 @@ public:
   */
  static int32 HandOffReceipts(const FString& Directory, TMap<FString, FString>& Seen, TFunctionRef<bool(const FString& JSON)> Consume);
 private:
+ friend class FProsettaWatchReceiptRecoveryTest;
  void OnDirectoryChanged(const TArray<FFileChangeData>& Changes);
  bool Tick(float DeltaTime);
  void ConnectImporter(UProsettaWatchSubsystem& Importer);
+ int32 PollImporter(UProsettaWatchSubsystem& Importer);
  FString Directory;
  FProsettaDecoderResolver ResolveDecoder;
  FImporterGetter GetImporter;
  FString Error;
  TMap<FString, FString> Seen;
+ /**
+  * Receipt contents ConsumeEvent rejected that are still in the directory. Rejection depends only on
+  * content, so reconciliation never re-offers them: that would retake the transport from a
+  * plugin-owned CLI and overwrite the importer's status every interval.
+  */
+ TSet<FString> Rejected;
  /** Starts raised so receipts written before the watch existed are handed off once. */
  std::atomic<bool> bChangesPending{true};
+ double LastReceiptScanSeconds = 0.;
  FDelegateHandle WatchHandle;
  FTSTicker::FDelegateHandle Ticker;
  TWeakObjectPtr<UProsettaWatchSubsystem> Connected;

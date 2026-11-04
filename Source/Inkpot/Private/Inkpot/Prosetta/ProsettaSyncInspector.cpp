@@ -173,6 +173,7 @@ bool UProsettaSyncInspector::ParseManifest(const FString& JSON, FProsettaManifes
 				{
 					FProsettaScopeVolumeEntry& VolumeEntry = Out.ScopeDetail.Volumes.AddDefaulted_GetRef();
 					VolumeEntry.Slug = InspectorStringField(*Volume, TEXT("slug"));
+					VolumeEntry.bIsDefault = InspectorBoolField(*Volume, TEXT("isDefault"));
 					VolumeEntry.Tag = InspectorStringField(*Volume, TEXT("tag"));
 					VolumeEntry.CompiledStoryArtifactKey = InspectorStringField(*Volume, TEXT("compiledStoryArtifactKey"));
 					VolumeEntry.LinesArtifactKey = InspectorStringField(*Volume, TEXT("linesArtifactKey"));
