@@ -3,6 +3,7 @@
 #include "IDirectoryWatcher.h"
 #include "Editor.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
@@ -61,10 +62,11 @@ int32 FProsettaReceiptWatch::HandOffReceipts(const FString& Directory, TMap<FStr
  for (const FString& file : files)
  {
   FString json;
-  if (!FFileHelper::LoadFileToString(json, *(Directory / file)) || !IsCompletionReceipt(json)) continue;
+  if (!FFileHelper::LoadFileToString(json, *(Directory / file))) continue;
   // Compared by content: a receipt replaced within the file system's timestamp resolution is still new.
+  // Seen holds only completion receipts, so an unchanged one is skipped before it is parsed again.
   const FString* previous = Seen.Find(file);
-  if ((previous && *previous == json) || !Consume(json)) continue;
+  if ((previous && *previous == json) || !IsCompletionReceipt(json) || !Consume(json)) continue;
   Seen.Add(file, MoveTemp(json));
   ++accepted;
  }
@@ -91,6 +93,7 @@ bool FProsettaReceiptWatch::Connect()
  if (!importer) return false;
  Connected.Reset();
  ConnectImporter(*importer);
+ Rejected.Reset();
  bChangesPending = true;
  return true;
 }
@@ -98,25 +101,41 @@ bool FProsettaReceiptWatch::Connect()
 int32 FProsettaReceiptWatch::Poll()
 {
  UProsettaWatchSubsystem* importer = GetImporter();
- if (!importer) return 0;
+ return importer ? PollImporter(*importer) : 0;
+}
+
+int32 FProsettaReceiptWatch::PollImporter(UProsettaWatchSubsystem& Importer)
+{
  int32 accepted = 0;
- HandOffReceipts(Directory, Seen, [this, importer, &accepted](const FString& JSON)
+ TSet<FString> rejected;
+ HandOffReceipts(Directory, Seen, [this, &Importer, &accepted, &rejected](const FString& JSON)
  {
+  if (Rejected.Contains(JSON)) { rejected.Add(JSON); return false; }
   // A receipt the importer already has ( e.g. left from an earlier session ) is recorded without
   // taking the transport, so it never stops a CLI the plugin owns or reports an idle producer.
-  if (importer->IsGenerationCurrent(JSON)) return true;
-  ConnectImporter(*importer);
-  if (!importer->ConsumeEvent(JSON)) return false;
+  if (Importer.IsGenerationCurrent(JSON)) return true;
+  ConnectImporter(Importer);
+  if (!Importer.ConsumeEvent(JSON)) { rejected.Add(JSON); return false; }
   ++accepted;
   return true;
  });
+ // Only rejected receipts still in the directory are remembered.
+ Rejected = MoveTemp(rejected);
  if (accepted > 0) UE_LOG(LogTemp, Display, TEXT("Prosetta: Handed %d completed generation(s) to the editor importer."), accepted);
  return accepted;
 }
 
 bool FProsettaReceiptWatch::Tick(float DeltaTime)
 {
- // The flag stays raised until an importer exists, so nothing written before then is missed.
- if (GetImporter() && bChangesPending.exchange(false)) Poll();
+ // Notifications are only hints: atomic receipt replacement can be missed/coalesced
+ // by the OS. Reconcile the small receipt directory even without a callback. The
+ // content de-dup and verified importer still own acceptance, PIE deferral and saves.
+ UProsettaWatchSubsystem* importer = GetImporter();
+ const double Now = FPlatformTime::Seconds();
+ if (importer && (bChangesPending.exchange(false) || Now - LastReceiptScanSeconds >= ReceiptScanIntervalSeconds))
+ {
+  LastReceiptScanSeconds = Now;
+  PollImporter(*importer);
+ }
  return true;
 }
