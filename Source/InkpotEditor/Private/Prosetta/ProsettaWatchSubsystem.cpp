@@ -45,6 +45,10 @@ namespace
   FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<>::Create(&result));
   return result;
  }
+ FString GenerationNamespace(int32 Project, const FString& Channel, const FString& Scope)
+ {
+  return FString::Printf(TEXT("Project%d/%s_%s"), Project, Channel == TEXT("live") ? TEXT("Live") : TEXT("Release"), *Hash(Scope));
+ }
  bool EventNamespace(const TSharedPtr<FJsonObject>& Event, FString& Out)
  {
   int32 project = 0;
@@ -54,7 +58,7 @@ namespace
       !Event->TryGetStringField(TEXT("generationId"), generation) || generation.Len() != 64 ||
       !Event->TryGetStringField(TEXT("generationPath"), path) || FPaths::IsRelative(path)) return false;
   for (const TCHAR c : generation) if (!FChar::IsHexDigit(c)) return false;
-  Out = FString::Printf(TEXT("Project%d/%s_%s"), project, channel == TEXT("live") ? TEXT("Live") : TEXT("Release"), *Hash(scope));
+  Out = GenerationNamespace(project, channel, scope);
   return true;
  }
  bool ContainedPath(const FString& Root, const FString& Relative, FString& Out)
@@ -321,6 +325,15 @@ void UProsettaWatchSubsystem::ConfigureExternalWatch(FProsettaDecoderResolver Re
  DecoderResolver = MoveTemp(ResolveDecoder);
  bExternalWatch = true;
  Status = TEXT("External CLI watch connected; waiting for a completed generation.");
+}
+
+const UProsettaGenerationAsset* UProsettaWatchSubsystem::FindAcceptedGeneration(int32 ProjectId, const FString& Channel, const FString& Scope) const
+{
+ if (ProjectId <= 0 || Scope.IsEmpty() || (Channel != TEXT("live") && Channel != TEXT("latest-release"))) return nullptr;
+ const FString Name = GenerationNamespace(ProjectId, Channel, Scope);
+ const FString Path = TEXT("/Game/Prosetta/") + Name / TEXT("Generation.Generation");
+ const UProsettaGenerationAsset* State = LoadObject<UProsettaGenerationAsset>(nullptr, *Path, nullptr, LOAD_NoWarn);
+ return State && State->Namespace == Name && !State->GenerationId.IsEmpty() ? State : nullptr;
 }
 
 bool UProsettaWatchSubsystem::IsGenerationCurrent(const FString& EventJSON) const

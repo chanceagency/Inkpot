@@ -1037,6 +1037,80 @@ bool FProsettaDashboardAcceptedMirrorTest::RunTest(const FString&)
  return true;
 }
 
+DASHBOARD_TEST(FProsettaDashboardReleasedMirrorTest, "Model.LatestReleaseUsesAcceptedFrozenSource")
+bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
+{
+ FModelFixture Fixture;
+ const FString PriorRoot = ProsettaStorySource::MirrorRoot();
+ FProsettaResolvedStoryPaths PriorPaths;
+ const bool bPriorOverride = PriorRoot != ProsettaStorySource::DefaultMirrorRoot();
+ if (bPriorOverride) { ProsettaStorySource::ResolveStoryPaths(PriorRoot, FString(), PriorPaths); }
+ ProsettaStorySource::SetEditorMirrorRoot(FString(), FString());
+ ON_SCOPE_EXIT { ProsettaStorySource::SetEditorMirrorRoot(bPriorOverride ? PriorRoot : FString(), PriorPaths.VolumeSlug); };
+ WriteManifest(Fixture.Deps.MirrorRoot, TEXT("live-current"));
+ const FString ReleasedRoot = Fixture.Root / TEXT("FrozenRelease");
+ const FString Id = FString::ChrN(64, TCHAR('a'));
+ WriteManifest(ReleasedRoot, Id, TEXT("main@1.0"));
+ TStrongObjectPtr<UProsettaDashboardSubsystem> Subsystem(NewObject<UProsettaDashboardSubsystem>());
+ Subsystem->Model = Fixture.Make();
+ FProsettaSyncProfile Profile = Subsystem->Model->GetState().Profile;
+ Profile.Mode = EProsettaSyncMode::Watch;
+ Profile.Channel = EProsettaWatchChannel::LatestRelease;
+ Profile.ProjectId = TEXT("199999");
+ Profile.Volumes.Reset();
+ FProsettaVolumeScope Volume; Volume.Slug = TEXT("main"); Profile.Volumes.Add(Volume);
+ Subsystem->Model->SetProfile(Profile);
+ auto Event = MakeShared<FJsonObject>();
+ Event->SetNumberField(TEXT("projectId"), 199999);
+ Event->SetStringField(TEXT("channel"), TEXT("latest-release"));
+ Event->SetStringField(TEXT("scope"), TEXT("main@latest-release"));
+ Event->SetStringField(TEXT("generationId"), Id);
+ Event->SetStringField(TEXT("generationPath"), ReleasedRoot);
+ Event->SetStringField(TEXT("manifestPath"), ReleasedRoot / TEXT("manifest.json"));
+ auto Release = MakeShared<FJsonObject>(); Release->SetStringField(TEXT("publishedAt"), TEXT("2026-11-04T06:00:00Z"));
+ Event->SetObjectField(TEXT("release"), Release);
+ FString JSON; FJsonSerializer::Serialize(Event, TJsonWriterFactory<>::Create(&JSON));
+ UPackage* Package = CreatePackage(TEXT("/Game/Prosetta/Project199999/Release_9ee09995e9b9879e7233834a0d4f8d216f13c41f84aa5338e5178d012cd4143d/Generation"));
+ TStrongObjectPtr<UProsettaGenerationAsset> Generation(NewObject<UProsettaGenerationAsset>(Package, TEXT("Generation")));
+ ON_SCOPE_EXIT { Generation->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional); };
+ Generation->Namespace = TEXT("Project199999/Release_9ee09995e9b9879e7233834a0d4f8d216f13c41f84aa5338e5178d012cd4143d");
+ Generation->GenerationId = Id; Generation->Provenance = JSON;
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("a matching accepted release rebuilds instead of comparing against live"), Fixture.Reloads, 1);
+ TestEqual(TEXT("release acceptance imports presentation"), Fixture.PresentationReloads, 1);
+ TestEqual(TEXT("dashboard reads the immutable accepted release"), Subsystem->Model->GetDeps().MirrorRoot, ReleasedRoot);
+ FProsettaManifestSummary Live;
+ UProsettaSyncInspector::LoadManifestFile(Fixture.Deps.MirrorRoot / TEXT("manifest.json"), Live);
+ TestEqual(TEXT("release acceptance never rewrites the live mirror"), Live.GenerationId, FString(TEXT("live-current")));
+ TestEqual(TEXT("runtime mirror follows the accepted release"), ProsettaStorySource::MirrorRoot(), ReleasedRoot);
+ FProsettaResolvedStoryPaths Explicit;
+ ProsettaStorySource::ResolveStoryPaths(ReleasedRoot, TEXT("other-volume"), Explicit);
+ TestEqual(TEXT("another explicitly selected scene volume retains its own live source"), Explicit.MirrorRoot, ProsettaStorySource::DefaultMirrorRoot());
+ auto Send = [&]() { FJsonSerializer::Serialize(Event, TJsonWriterFactory<>::Create(&JSON)); Generation->Provenance = JSON; Subsystem->HandleGenerationAccepted(*Generation); };
+ Event->SetStringField(TEXT("scope"), TEXT("other@latest-release")); Send();
+ TestEqual(TEXT("another volume cannot steal the source"), Fixture.Reloads, 1);
+ Event->SetStringField(TEXT("scope"), TEXT("main@latest-release"));
+ Event->SetNumberField(TEXT("projectId"), 199998); Send();
+ TestEqual(TEXT("another project cannot steal the source"), Fixture.Reloads, 1);
+ Event->SetNumberField(TEXT("projectId"), 199999);
+ Release->SetStringField(TEXT("publishedAt"), TEXT("2026-11-03T06:00:00Z")); Send();
+ TestEqual(TEXT("an older published release cannot steal the source"), Fixture.Reloads, 1);
+ Profile.Channel = EProsettaWatchChannel::Live; Subsystem->Model->SetProfile(Profile); Subsystem->RefreshReleasedSource();
+ TestEqual(TEXT("leaving latest-release restores the live source"), Subsystem->Model->GetDeps().MirrorRoot, Fixture.Deps.MirrorRoot);
+ TestEqual(TEXT("leaving latest-release clears transient runtime selection"), ProsettaStorySource::MirrorRoot(), ProsettaStorySource::DefaultMirrorRoot());
+ Release->SetStringField(TEXT("publishedAt"), TEXT("2026-11-04T06:00:00Z"));
+ FJsonSerializer::Serialize(Event, TJsonWriterFactory<>::Create(&JSON)); Generation->Provenance = JSON;
+ Profile.Channel = EProsettaWatchChannel::LatestRelease; Subsystem->Model->SetProfile(Profile);
+ Subsystem->RefreshReleasedSource();
+ TestEqual(TEXT("existing accepted registry restores the release without replaying a receipt"), Subsystem->Model->GetDeps().MirrorRoot, ReleasedRoot);
+ TestEqual(TEXT("restored source rebuilds once in its new selection"), Fixture.Reloads, 2);
+ Subsystem->RefreshReleasedSource();
+ TestEqual(TEXT("polling does not repeat the accepted presentation import"), Fixture.Reloads, 2);
+ Profile.Mode = EProsettaSyncMode::SyncOnce; Subsystem->Model->SetProfile(Profile); Subsystem->RefreshReleasedSource();
+ TestEqual(TEXT("switching the same profile to Sync Once restores its normal mirror"), Subsystem->Model->GetDeps().MirrorRoot, Fixture.Deps.MirrorRoot);
+ return true;
+}
+
 DASHBOARD_TEST(FProsettaDashboardModelAcceptedPresentationTest, "Model.AcceptedGenerationImportsPresentationOnce")
 bool FProsettaDashboardModelAcceptedPresentationTest::RunTest(const FString&)
 {

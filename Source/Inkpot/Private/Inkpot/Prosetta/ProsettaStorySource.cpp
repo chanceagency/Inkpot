@@ -27,9 +27,39 @@ bool FProsettaResolvedStoryPaths::IsComplete() const
 
 namespace ProsettaStorySource
 {
-	FString MirrorRoot()
+	namespace
+	{
+		FString EditorMirrorRoot;
+		FString EditorVolumeSlug;
+	}
+
+	FString DefaultMirrorRoot()
 	{
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Prosetta"));
+	}
+
+	FString VolumeStoryAssetPath(const FString& Slug)
+	{
+		return FString::Printf(TEXT("/Game/Prosetta/Volumes/%s/Story"), *Slug);
+	}
+
+	FString EditorStoryAssetPath(const FString& VolumeSlug)
+	{
+		return !EditorMirrorRoot.IsEmpty() && (VolumeSlug.IsEmpty() || VolumeSlug == EditorVolumeSlug)
+			? VolumeStoryAssetPath(EditorVolumeSlug) : FString();
+	}
+
+	FString MirrorRoot()
+	{
+		return EditorMirrorRoot.IsEmpty() ? DefaultMirrorRoot() : EditorMirrorRoot;
+	}
+
+	void SetEditorMirrorRoot(const FString& Root, const FString& VolumeSlug)
+	{
+#if WITH_EDITOR
+		EditorMirrorRoot = Root;
+		EditorVolumeSlug = VolumeSlug;
+#endif
 	}
 
 	FString ManifestPath(const FString& InMirrorRoot)
@@ -157,6 +187,13 @@ namespace ProsettaStorySource
 
 	bool ResolveStoryPaths(const FString& InMirrorRoot, const FString& VolumeSlug, FProsettaResolvedStoryPaths& Out)
 	{
+		// An explicitly selected different scene volume must not fall back into this
+		// editor profile's single-volume release. Keep its live source independent.
+		if (!EditorMirrorRoot.IsEmpty() && InMirrorRoot == EditorMirrorRoot &&
+			!VolumeSlug.IsEmpty() && VolumeSlug != EditorVolumeSlug)
+		{
+			return ResolveStoryPaths(DefaultMirrorRoot(), VolumeSlug, Out);
+		}
 		FProsettaManifestSummary Manifest;
 		bool bResolved;
 		if (UProsettaSyncInspector::LoadManifestFile(ManifestPath(InMirrorRoot), Manifest))
