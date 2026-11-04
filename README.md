@@ -553,3 +553,22 @@ Blueprint setters (`SetDiameter`, `SetThickness`, `SetBaseColor`,
 to the fields still work, since the widget compares them with what it last
 painted on each tick, but inside an invalidation or retainer panel the change can
 reach the screen one frame later.
+
+### Watch import batches (1.53.24)
+
+Automatic watch imports wait for 750 ms without a new completed-generation receipt,
+without requiring editor focus. Receipts continue to queue while Play is running; each namespace keeps its newest generation.
+Apply Pending remains immediate when the editor is safe. A batch holds one progress
+window across generation acceptance and the dashboard story/presentation rebuild,
+so hundreds of voice takes do not flash hundreds of import windows. Import and
+reload callbacks cannot recursively start another batch; newer work stays queued.
+
+Generated story, presentation and media packages save without interactive revision
+control dialogs. Read-only packages fail with a checkout/permissions diagnostic;
+check them out or make them writable and explicitly rebuild. This does not save
+unrelated dirty level assets or change revision-control settings.
+
+Watch follow-up (1.54.24): editor focus no longer prevents automatic application;
+the quiet interval and PIE/save safety checks still apply. When one-shot sync
+removes the generation marker, presentation rebuild ownership is checked against
+the complete accepted artifact set, including audio, before rebuilding.

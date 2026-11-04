@@ -13,6 +13,7 @@
 #include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
 #include "Editor.h"
+#include "Misc/ScopedSlowTask.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Factories/SoundFactory.h"
 #include "AssetDeleteModel.h"
@@ -304,7 +305,11 @@ bool UProsettaWatchSubsystem::Tick(float DeltaTime)
    else Status = FString::Printf(TEXT("CLI exited with code %d%s; last imported assets retained."), exitCode, *diagnostic);
   }
  }
- TryApplyPending();
+ // Focus is not an import safety condition: background updates must still apply.
+ // The quiet interval and IsSafeToApply retain burst coalescing and PIE/save deferral.
+ // A continuous receipt stream must not postpone the newest generation forever.
+ const double now = FPlatformTime::Seconds();
+ if (now - LastPendingEventTime >= 0.75 || now - FirstPendingEventTime >= 10.0) TryApplyPending();
  return true;
 }
 bool UProsettaWatchSubsystem::IsSafeToApply()
@@ -376,10 +381,18 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
   return true;
  }
  if (!EventNamespace(event, name)) { Status = TEXT("Rejected invalid completed generation identity."); return false; }
- if (const FString* queued = Pending.Find(name))
+ const FString* queued = Pending.Find(name);
+ if (queued)
  {
   TSharedPtr<FJsonObject> prior;
   if (Parse(*queued, prior) && OlderRevision(event, prior)) return true;
+ }
+ // Replayed receipts must not keep postponing a genuinely new pending generation.
+ if (!queued || *queued != EventJSON)
+ {
+  const double now = FPlatformTime::Seconds();
+  if (Pending.IsEmpty()) FirstPendingEventTime = now;
+  LastPendingEventTime = now;
  }
  Pending.Add(name, EventJSON);
  Status = TEXT("Generation queued until Play stops and editor is idle.");
@@ -387,12 +400,18 @@ bool UProsettaWatchSubsystem::ConsumeEvent(const FString& EventJSON)
 }
 bool UProsettaWatchSubsystem::TryApplyPending()
 {
- if (Pending.IsEmpty() || !IsSafeToApply()) return false;
+ if (bApplyingPending || Pending.IsEmpty() || !IsSafeToApply()) return false;
+ TGuardValue<bool> applying(bApplyingPending, true);
  TStrongObjectPtr<UProsettaWatchSubsystem> keepAlive(this);
+ // One window owns the entire batch, including the dashboard's accepted-generation rebuild.
+ // Nested audio factories otherwise open and close their own slow-task window for every take.
  TArray<FString> names;
  Pending.GetKeys(names);
+ FScopedSlowTask progress(static_cast<float>(names.Num()), NSLOCTEXT("ProsettaWatch", "ImportGeneration", "Importing Prosetta generation"));
+ progress.MakeDialog();
  for (const FString& name : names)
  {
+  progress.EnterProgressFrame(1.f, FText::Format(NSLOCTEXT("ProsettaWatch", "ImportNamespace", "Importing Prosetta generation: {0}"), FText::FromString(name)));
   // The decoder resolver and accepted listeners may re-enter: skip what they applied, keep what they queued.
   const FString* queued = Pending.Find(name);
   if (!queued) continue;

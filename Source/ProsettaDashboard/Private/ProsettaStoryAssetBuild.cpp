@@ -7,7 +7,7 @@
 #include "AssetToolsModule.h"
 #include "AutomatedAssetImportData.h"
 #include "EditorReimportHandler.h"
-#include "FileHelpers.h"
+#include "Misc/ScopedSlowTask.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
@@ -104,26 +104,30 @@ namespace
 		if (!Options.bSave) { return true; }
 		// Only what this build wrote: never the user's unrelated unsaved edits.
 		const TArray<UPackage*> Packages = BuiltPackages(Asset);
-		if (IsRunningCommandlet() || GIsAutomationTesting)
+		// These are derived packages owned by the build, not arbitrary dirty user assets.
+		// SavePackages invokes interactive revision-control checkout/error dialogs even when
+		// source control is disabled. A watch import must report an unwritable file once.
+		// Check every destination before writing any, so a read-only presentation package
+		// cannot leave a newly saved story beside stale presentation/media on disk.
+		for (UPackage* Package : Packages)
 		{
-			for (UPackage* Package : Packages)
+			if (IFileManager::Get().IsReadOnly(*FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension())))
 			{
-				const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
-				FSavePackageArgs Args;
-				Args.TopLevelFlags = RF_Public | RF_Standalone;
-				Args.SaveFlags = SAVE_NoError;
-				if (!UPackage::SavePackage(Package, Package == Asset->GetOutermost() ? Asset : Package->FindAssetInPackage(), *Filename, Args))
-				{
-					OutError = FString::Printf(TEXT("Saving %s failed."), *Filename);
-					return false;
-				}
+				OutError = FString::Printf(TEXT("Cannot save read-only generated package %s; check it out or make it writable, then rebuild."), *Package->GetName());
+				return false;
 			}
-			return true;
 		}
-		if (!UEditorLoadingAndSavingUtils::SavePackages(Packages, true))
+		for (UPackage* Package : Packages)
 		{
-			OutError = TEXT("Import succeeded but saving the story and presentation packages failed.");
-			return false;
+			const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+			FSavePackageArgs Args;
+			Args.TopLevelFlags = RF_Public | RF_Standalone;
+			Args.SaveFlags = SAVE_NoError;
+			if (!UPackage::SavePackage(Package, Package == Asset->GetOutermost() ? Asset : Package->FindAssetInPackage(), *Filename, Args))
+			{
+				OutError = FString::Printf(TEXT("Saving generated package %s failed; check its permissions and rebuild."), *Package->GetName());
+				return false;
+			}
 		}
 		return true;
 	}
@@ -131,6 +135,8 @@ namespace
 
 FProsettaStoryAssetBuildResult RebuildProsettaStoryAsset(const FProsettaStoryAssetBuildOptions& InOptions)
 {
+	FScopedSlowTask Progress(1.f, NSLOCTEXT("ProsettaStoryAssetBuild", "Rebuild", "Rebuilding Prosetta story and presentation"));
+	Progress.MakeDialog();
 	FProsettaStoryAssetBuildResult Result;
 	FProsettaStoryAssetBuildOptions Options = InOptions;
 	if (Options.MirrorRoot.IsEmpty()) { Options.MirrorRoot = ProsettaStorySource::MirrorRoot(); }

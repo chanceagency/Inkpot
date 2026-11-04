@@ -26,9 +26,13 @@
 #include "Dom/JsonObject.h"
 #include "Framework/Docking/TabManager.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
+#include "Asset/InkpotStoryAsset.h"
+#include "UObject/Package.h"
 #include "Misc/ScopeExit.h"
 #include "ScopedTransaction.h"
 #include "Serialization/JsonReader.h"
@@ -599,6 +603,51 @@ bool FProsettaDashboardCliMissingJsonObjectTest::RunTest(const FString&)
  return true;
 }
 
+DASHBOARD_TEST(FProsettaDashboardGeneratedSaveTest, "GeneratedSaveFailsReadOnlyWithoutRetry")
+bool FProsettaDashboardGeneratedSaveTest::RunTest(const FString&)
+{
+ const FString Root = TransientDir(TEXT("GeneratedSave"));
+ const FString PackageName = TEXT("/Game/ProsettaBuildTests/T") + FGuid::NewGuid().ToString(EGuidFormats::Digits) + TEXT("/Story");
+ const FString Filename = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+ ON_SCOPE_EXIT
+ {
+  FPlatformFileManager::Get().GetPlatformFile().SetReadOnly(*Filename, false);
+  IFileManager::Get().DeleteDirectory(*FPaths::GetPath(Filename), false, true);
+  IFileManager::Get().DeleteDirectory(*Root, false, true);
+ };
+ FProsettaStoryAssetBuildOptions Options;
+ Options.MirrorRoot = Root / TEXT("Mirror");
+ Options.StageDir = Root / TEXT("Stage");
+ Options.AssetPath = PackageName;
+ Options.bImportPresentation = false;
+ Options.CompiledStoryPath = Options.MirrorRoot / TEXT("compiled/story.json");
+ Options.LinesPath = Options.MirrorRoot / TEXT("lines/lines.json");
+ FFileHelper::SaveStringToFile(TEXT("{\"inkVersion\":21,\"root\":[\"done\",null],\"listDefs\":{}}"), *Options.CompiledStoryPath);
+ FFileHelper::SaveStringToFile(TEXT("{\"lines\":[]}"), *Options.LinesPath);
+ const FProsettaStoryAssetBuildResult First = RebuildProsettaStoryAsset(Options);
+ if (!TestTrue(TEXT("generated story saves"), First.bSucceeded)) return false;
+ TestTrue(TEXT("generated package exists"), FPaths::FileExists(Filename));
+ TArray<uint8> Before;
+ FFileHelper::LoadFileToArray(Before, *Filename);
+ TestTrue(TEXT("fixture becomes read-only"), FPlatformFileManager::Get().GetPlatformFile().SetReadOnly(*Filename, true));
+ const FProsettaStoryAssetBuildResult Blocked = RebuildProsettaStoryAsset(Options);
+ TestFalse(TEXT("unwritable generated package fails once"), Blocked.bSucceeded);
+ TestTrue(TEXT("failure explains how to recover"), Blocked.Error.Contains(TEXT("read-only generated package")));
+ TArray<uint8> After;
+ FFileHelper::LoadFileToArray(After, *Filename);
+ TestTrue(TEXT("read-only file remains intact"), Before == After);
+ FPlatformFileManager::Get().GetPlatformFile().SetReadOnly(*Filename, false);
+ TestTrue(TEXT("explicit rebuild recovers after checkout"), RebuildProsettaStoryAsset(Options).bSucceeded);
+ // Release this test-owned package so it cannot leak dirty assets into the host editor.
+ if (UObject* Asset = FindObject<UObject>(nullptr, *First.ObjectPath))
+ {
+  Asset->GetOutermost()->SetDirtyFlag(false);
+  Asset->ClearFlags(RF_Public | RF_Standalone);
+  Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+ }
+ return true;
+}
+
 // ------------------------------------------------------------------ model
 
 namespace
@@ -906,9 +955,42 @@ bool FProsettaDashboardAcceptedMirrorTest::RunTest(const FString&)
  Subsystem->HandleGenerationAccepted(*Generation);
  TestEqual(TEXT("current mirror generation rebuilds once"), Fixture.Reloads, 1);
  TestEqual(TEXT("current generation imports presentation"), Fixture.PresentationReloads, 1);
+ const FString AcceptedRoot = Fixture.Root / TEXT("Accepted");
+ auto WriteSnapshot = [&](const FString& Root, const FString& Id)
+ {
+  WriteManifest(Root, Id);
+  FString Json;
+  FFileHelper::LoadFileToString(Json, *(Root / TEXT("manifest.json")));
+  TSharedPtr<FJsonObject> Object;
+  FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Object);
+  TArray<TSharedPtr<FJsonValue>> Artifacts;
+  for (const FString& Key : {FString(TEXT("compiled-story")), FString(TEXT("audio-file:take"))})
+  {
+   auto Artifact = MakeShared<FJsonObject>();
+   Artifact->SetStringField(TEXT("key"), Key);
+   Artifact->SetStringField(TEXT("relativePath"), Key == TEXT("compiled-story") ? TEXT("compiled/story.json") : TEXT("audio/take.wav"));
+   Artifact->SetStringField(TEXT("checksum"), Key == TEXT("compiled-story") ? TEXT("story-sha") : TEXT("audio-sha"));
+   Artifact->SetNumberField(TEXT("byteSize"), 10);
+   Artifacts.Add(MakeShared<FJsonValueObject>(Artifact));
+  }
+  Object->SetArrayField(TEXT("artifacts"), Artifacts);
+  FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<>::Create(&Json));
+  FFileHelper::SaveStringToFile(Json, *(Root / TEXT("manifest.json")));
+ };
+ WriteSnapshot(AcceptedRoot, TEXT("current"));
+ Generation->Provenance = TEXT("{\"manifestPath\":\"") + (AcceptedRoot / TEXT("manifest.json")) + TEXT("\"}");
+ WriteSnapshot(Fixture.Deps.MirrorRoot, TEXT(""));
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("identical one-shot mirror without marker imports presentation"), Fixture.PresentationReloads, 2);
+ FString Changed;
+ FFileHelper::LoadFileToString(Changed, *(Fixture.Deps.MirrorRoot / TEXT("manifest.json")));
+ Changed.ReplaceInline(TEXT("audio-sha"), TEXT("new-audio-sha"));
+ FFileHelper::SaveStringToFile(Changed, *(Fixture.Deps.MirrorRoot / TEXT("manifest.json")));
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("different artifact checksum never rebuilds unrelated mirror"), Fixture.Reloads, 2);
  Subsystem->bSuspendPolling = true;
  Subsystem->HandleGenerationAccepted(*Generation);
- TestEqual(TEXT("suspended test subsystem never imports"), Fixture.Reloads, 1);
+ TestEqual(TEXT("suspended test subsystem never imports"), Fixture.Reloads, 2);
  return true;
 }
 
@@ -958,6 +1040,42 @@ bool FProsettaDashboardModelAcceptedPresentationTest::RunTest(const FString&)
 	TestEqual(TEXT("plain reload ran"), Fixture.Reloads, 4);
 	TestEqual(TEXT("plain reload is story-only"), Fixture.PresentationReloads, 3);
 	return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardModelReentrantReloadTest, "Model.ReentrantReloadRetainsNewAccept")
+bool FProsettaDashboardModelReentrantReloadTest::RunTest(const FString&)
+{
+ FModelFixture Fixture;
+ TSharedPtr<FProsettaDashboardModel> Model;
+ int32 Reloads = 0;
+ int32 Depth = 0;
+ TArray<bool> Presentation;
+ Fixture.Deps.Reload = [&](const FProsettaSyncProfile&, const FString&, bool bWithPresentation, FString& Error)
+ {
+  ++Depth;
+  TestEqual(TEXT("reload callbacks never overlap"), Depth, 1);
+  Presentation.Add(bWithPresentation);
+  if (++Reloads == 1)
+  {
+   // A new generation arrives while a factory/save is pumping editor events.
+   Model->NoteGenerationAccepted(TEXT("gen-new"), true);
+   TestFalse(TEXT("nested poll cannot reload"), Model->TryRunPendingReload());
+   Error = TEXT("first reload deliberately failed");
+   --Depth;
+   return false;
+  }
+  --Depth;
+  return true;
+ };
+ Model = Fixture.Make();
+ Model->EnqueueReload(false);
+ TestEqual(TEXT("first call runs once"), Reloads, 1);
+ TestTrue(TEXT("accept during failed reload remains pending"), Model->GetState().bReloadPending);
+ TestTrue(TEXT("next idle pass reloads"), Model->TryRunPendingReload());
+ TestEqual(TEXT("second request retains presentation flag"), Presentation, (TArray<bool>{false, true}));
+ TestFalse(TEXT("no retry loop after completion"), Model->TryRunPendingReload());
+ TestEqual(TEXT("exactly two requested rebuilds"), Reloads, 2);
+ return true;
 }
 
 DASHBOARD_TEST(FProsettaDashboardModelExternalChangeTest, "Model.ExternalChange")

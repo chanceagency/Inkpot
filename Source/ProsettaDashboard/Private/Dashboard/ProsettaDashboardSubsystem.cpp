@@ -27,6 +27,7 @@
 #include "Modules/ModuleManager.h"
 #include "Prosetta/ProsettaWatchSubsystem.h"
 #include "ScopedTransaction.h"
+#include "Serialization/JsonSerializer.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "ProsettaDashboard"
@@ -39,6 +40,28 @@ namespace
 	constexpr double ManifestDebounceSeconds = 0.5;
 	/** Manifest writes this soon after the dashboard's own CLI run (sync, volume switch) are its own, not external. */
 	constexpr double OwnRunGraceSeconds = 3.0;
+
+	/** True when both manifests describe the same project scope and the same verified, uniquely keyed artifacts. */
+	bool SameArtifactSet(const FProsettaManifestSummary& Mirror, const FProsettaManifestSummary& Accepted)
+	{
+		if (Mirror.ProjectId <= 0 || Mirror.ProjectId != Accepted.ProjectId || Mirror.Scope != Accepted.Scope ||
+			Mirror.Artifacts.IsEmpty() || Mirror.Artifacts.Num() != Accepted.Artifacts.Num()) { return false; }
+		TMap<FString, const FProsettaArtifactSummary*> ByKey;
+		ByKey.Reserve(Accepted.Artifacts.Num());
+		for (const FProsettaArtifactSummary& Artifact : Accepted.Artifacts)
+		{
+			if (ByKey.Contains(Artifact.Key)) { return false; }
+			ByKey.Add(Artifact.Key, &Artifact);
+		}
+		for (const FProsettaArtifactSummary& Artifact : Mirror.Artifacts)
+		{
+			// Removing each match rejects duplicate mirror keys that would otherwise pair with one accepted entry twice.
+			const FProsettaArtifactSummary* Match = nullptr;
+			if (!ByKey.RemoveAndCopyValue(Artifact.Key, Match) || Artifact.RelativePath != Match->RelativePath ||
+				Artifact.ByteSize != Match->ByteSize || !Artifact.Checksum.Equals(Match->Checksum, ESearchCase::IgnoreCase)) { return false; }
+		}
+		return true;
+	}
 }
 
 void UProsettaDashboardSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -227,8 +250,22 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 	// must not rebuild this dashboard's mirror or run its presentation importer.
 	FProsettaManifestSummary Manifest;
 	if (Generation.GenerationId.IsEmpty() ||
-		!UProsettaSyncInspector::LoadManifestFile(ProsettaStorySource::ManifestPath(Model->GetDeps().MirrorRoot), Manifest) ||
-		Manifest.GenerationId != Generation.GenerationId) { return; }
+		!UProsettaSyncInspector::LoadManifestFile(ProsettaStorySource::ManifestPath(Model->GetDeps().MirrorRoot), Manifest)) { return; }
+	if (Manifest.GenerationId != Generation.GenerationId)
+	{
+		// One-shot sync may write generation:null for identical content. Compare the full
+		// verified artifact set, never just compiled Ink (audio-only updates matter too).
+		if (!Manifest.GenerationId.IsEmpty()) { return; }
+		TSharedPtr<FJsonObject> Event;
+		FString ManifestPath;
+		FProsettaManifestSummary Accepted;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Generation.Provenance), Event) || !Event ||
+			!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath)) { return; }
+		// The importer accepts a relative manifestPath that resolves to its full path; resolve it the same way.
+		ManifestPath = FPaths::ConvertRelativePathToFull(ManifestPath);
+		if (!UProsettaSyncInspector::LoadManifestFile(ManifestPath, Accepted) || Accepted.GenerationId != Generation.GenerationId ||
+			!SameArtifactSet(Manifest, Accepted)) { return; }
+	}
 	// A newly accepted generation is already in the mirror; our own import of it is not an "external" change.
 	bManifestChangeQueued = false;
 	Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);

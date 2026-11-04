@@ -1012,23 +1012,26 @@ void FProsettaDashboardModel::EnqueueReload(bool bWithPresentation)
 
 bool FProsettaDashboardModel::TryRunPendingReload()
 {
-	if (!State.bReloadPending) { return false; }
+	if (bReloadInProgress || !State.bReloadPending) { return false; }
 	const bool bPIE = Deps.IsPIE ? Deps.IsPIE() : State.bPIE;
 	const bool bSafe = Deps.SafeToApply ? Deps.SafeToApply() : true;
 	if (bPIE || !bSafe) { return false; }
+	TGuardValue<bool> Reloading(bReloadInProgress, true);
 	State.bReloadPending = false;
-	DoReload();
+	// Consume this request before calling out: a nested accept must retain its own flags.
+	const bool bWithPresentation = bReloadWithPresentation;
 	bReloadWithPresentation = false;
+	DoReload(bWithPresentation);
 	Broadcast();
 	return true;
 }
 
-bool FProsettaDashboardModel::DoReload()
+bool FProsettaDashboardModel::DoReload(bool bWithPresentation)
 {
 	if (!Deps.Reload) { return false; }
 	const FString Slug = State.Profile.Volumes.Num() == 1 ? State.Profile.Volumes[0].Slug : FString();
 	FString Error;
-	const bool bOk = Deps.Reload(State.Profile, Slug, bReloadWithPresentation, Error);
+	const bool bOk = Deps.Reload(State.Profile, Slug, bWithPresentation, Error);
 	FProsettaChangeEntry Entry;
 	Entry.Time = FDateTime::UtcNow();
 	Entry.Kind = bOk ? EProsettaChangeKind::Info : EProsettaChangeKind::Error;

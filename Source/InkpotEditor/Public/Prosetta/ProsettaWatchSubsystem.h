@@ -81,6 +81,7 @@ public:
  /** Seconds StartWatch waits for `--version` before giving up ( the .NET CLI may cold start slowly ). */
  float VersionCheckTimeoutSeconds = 30.0f;
 private:
+ friend class FProsettaWatchAutomaticApplyTest;
  bool Tick(float DeltaTime);
  /** OutAccepted is the registry of a newly accepted generation; null for a replay, an older revision or a failure. */
  bool ApplyGeneration(const FString& EventJSON, FString& OutError, UProsettaGenerationAsset*& OutAccepted);
@@ -108,6 +109,12 @@ private:
  /** Last meaningful non-NDJSON line the CLI printed ( stderr shares the pipe ), reported if it exits. See SelectDiagnostic. */
  FString LastDiagnostic;
  FString Status = TEXT("Stopped");
+ /** Covers validation, asset saves, cleanup and accepted listeners, all of which may pump editor events. */
+ bool bApplyingPending = false;
+ /** Automatic ticks wait for a quiet receipt interval; explicit Apply Pending remains immediate. */
+ double LastPendingEventTime = 0.0;
+ /** When the queue last went from empty to non-empty; caps how long a receipt stream can defer automatic apply. */
+ double FirstPendingEventTime = 0.0;
  TMap<FString, FString> Pending;
  TMap<FString, FString> NativeGenerationPaths;
 };

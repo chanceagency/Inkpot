@@ -296,7 +296,7 @@ private:
 	/** `config set|clear volumes` through the wrapper (local config only); Done gets an empty string on success. */
 	void ApplyConfigScope(const FString& Scope, TFunction<void(const FString& Error)> Done);
 	void AddChangesFromSyncLines(const TArray<TSharedPtr<FJsonObject>>& Objects);
-	bool DoReload();
+	bool DoReload(bool bWithPresentation);
 	/** Has Poll start the watch once the stopped CLI is gone, giving up after WatchRestartTimeoutSeconds. */
 	void QueueWatchRestart();
 	/** Starts the watch a restart stopped, once the old CLI is gone; true when the restart finished or gave up. */
@@ -321,6 +321,7 @@ private:
 	bool bConnecting = false;
 	int32 InFlight = 0;
 	bool bReloadWithPresentation = false;
+	bool bReloadInProgress = false;
 	FDateTime LastManifestMTime;
 	FString InMemoryActiveProfile;
 	TArray<FProsettaRecentConnection> InMemoryRecent;
