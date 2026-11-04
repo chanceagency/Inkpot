@@ -494,6 +494,35 @@ bool FProsettaWatchEmptyAudioTest::RunTest(const FString&)
  return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchAutomaticApplyTest, "Inkpot.Prosetta.WatchAutomaticApply",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProsettaWatchAutomaticApplyTest::RunTest(const FString&)
+{
+ FFixtureCleanup cleanup;
+ const FString scope = TEXT("test-") + FGuid::NewGuid().ToString();
+ const FFixture first = Generation(scope, TEXT("1"), TEXT("live"), false);
+ const FFixture latest = Generation(scope, TEXT("2"), TEXT("live"), false);
+ cleanup.Track(first); cleanup.Track(latest);
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
+ watch->ConsumeEvent(first.Event);
+ watch->Tick(0.f);
+ TestEqual(TEXT("quiet interval defers automatic import"), watch->GetPendingCount(), 1);
+ watch->ConsumeEvent(latest.Event);
+ watch->LastPendingEventTime = 0.; // Deterministic elapsed quiet interval, no real-time sleeps.
+ UWorld* previous = GEditor->PlayWorld;
+ GEditor->PlayWorld = NewObject<UWorld>();
+ watch->Tick(0.f);
+ TestEqual(TEXT("PIE still defers automatic import"), watch->GetPendingCount(), 1);
+ GEditor->PlayWorld = previous;
+ // Automation has no foreground editor window. Tick must nevertheless import when safe.
+ watch->Tick(0.f);
+ TestEqual(TEXT("idle background tick drains pending generations"), watch->GetPendingCount(), 0);
+ UProsettaGenerationAsset* state = State(latest);
+ if (TestNotNull(TEXT("automatic ticker published the latest generation"), state))
+  TestTrue(TEXT("burst uses newest story"), CastChecked<UInkpotStoryAsset>(state->Assets.FindRef(TEXT("compiled-story")))->GetCompiledJSON().Contains(TEXT("Generation 2")));
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchReentrantApplyTest, "Inkpot.Prosetta.WatchReentrantApply",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 

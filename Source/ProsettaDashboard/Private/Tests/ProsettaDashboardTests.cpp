@@ -955,9 +955,42 @@ bool FProsettaDashboardAcceptedMirrorTest::RunTest(const FString&)
  Subsystem->HandleGenerationAccepted(*Generation);
  TestEqual(TEXT("current mirror generation rebuilds once"), Fixture.Reloads, 1);
  TestEqual(TEXT("current generation imports presentation"), Fixture.PresentationReloads, 1);
+ const FString AcceptedRoot = Fixture.Root / TEXT("Accepted");
+ auto WriteSnapshot = [&](const FString& Root, const FString& Id)
+ {
+  WriteManifest(Root, Id);
+  FString Json;
+  FFileHelper::LoadFileToString(Json, *(Root / TEXT("manifest.json")));
+  TSharedPtr<FJsonObject> Object;
+  FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Object);
+  TArray<TSharedPtr<FJsonValue>> Artifacts;
+  for (const FString& Key : {FString(TEXT("compiled-story")), FString(TEXT("audio-file:take"))})
+  {
+   auto Artifact = MakeShared<FJsonObject>();
+   Artifact->SetStringField(TEXT("key"), Key);
+   Artifact->SetStringField(TEXT("relativePath"), Key == TEXT("compiled-story") ? TEXT("compiled/story.json") : TEXT("audio/take.wav"));
+   Artifact->SetStringField(TEXT("checksum"), Key == TEXT("compiled-story") ? TEXT("story-sha") : TEXT("audio-sha"));
+   Artifact->SetNumberField(TEXT("byteSize"), 10);
+   Artifacts.Add(MakeShared<FJsonValueObject>(Artifact));
+  }
+  Object->SetArrayField(TEXT("artifacts"), Artifacts);
+  FJsonSerializer::Serialize(Object.ToSharedRef(), TJsonWriterFactory<>::Create(&Json));
+  FFileHelper::SaveStringToFile(Json, *(Root / TEXT("manifest.json")));
+ };
+ WriteSnapshot(AcceptedRoot, TEXT("current"));
+ Generation->Provenance = TEXT("{\"manifestPath\":\"") + (AcceptedRoot / TEXT("manifest.json")) + TEXT("\"}");
+ WriteSnapshot(Fixture.Deps.MirrorRoot, TEXT(""));
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("identical one-shot mirror without marker imports presentation"), Fixture.PresentationReloads, 2);
+ FString Changed;
+ FFileHelper::LoadFileToString(Changed, *(Fixture.Deps.MirrorRoot / TEXT("manifest.json")));
+ Changed.ReplaceInline(TEXT("audio-sha"), TEXT("new-audio-sha"));
+ FFileHelper::SaveStringToFile(Changed, *(Fixture.Deps.MirrorRoot / TEXT("manifest.json")));
+ Subsystem->HandleGenerationAccepted(*Generation);
+ TestEqual(TEXT("different artifact checksum never rebuilds unrelated mirror"), Fixture.Reloads, 2);
  Subsystem->bSuspendPolling = true;
  Subsystem->HandleGenerationAccepted(*Generation);
- TestEqual(TEXT("suspended test subsystem never imports"), Fixture.Reloads, 1);
+ TestEqual(TEXT("suspended test subsystem never imports"), Fixture.Reloads, 2);
  return true;
 }
 

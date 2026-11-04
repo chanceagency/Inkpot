@@ -13,7 +13,6 @@
 #include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
 #include "Editor.h"
-#include "Framework/Application/SlateApplication.h"
 #include "Misc/ScopedSlowTask.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Factories/SoundFactory.h"
@@ -306,10 +305,9 @@ bool UProsettaWatchSubsystem::Tick(float DeltaTime)
    else Status = FString::Printf(TEXT("CLI exited with code %d%s; last imported assets retained."), exitCode, *diagnostic);
   }
  }
- // Coalesce bursts while the app is away or the CLI is finishing several generations.
- // Explicit Apply Pending bypasses this quiet interval, but never the safety/re-entry checks.
- const bool bForeground = !FSlateApplication::IsInitialized() || FSlateApplication::Get().IsActive();
- if (bForeground && FPlatformTime::Seconds() - LastPendingEventTime >= 0.75) TryApplyPending();
+ // Focus is not an import safety condition: background updates must still apply.
+ // The quiet interval and IsSafeToApply retain burst coalescing and PIE/save deferral.
+ if (FPlatformTime::Seconds() - LastPendingEventTime >= 0.75) TryApplyPending();
  return true;
 }
 bool UProsettaWatchSubsystem::IsSafeToApply()

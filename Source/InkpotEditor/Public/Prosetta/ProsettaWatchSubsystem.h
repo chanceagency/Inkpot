@@ -81,6 +81,7 @@ public:
  /** Seconds StartWatch waits for `--version` before giving up ( the .NET CLI may cold start slowly ). */
  float VersionCheckTimeoutSeconds = 30.0f;
 private:
+ friend class FProsettaWatchAutomaticApplyTest;
  bool Tick(float DeltaTime);
  /** OutAccepted is the registry of a newly accepted generation; null for a replay, an older revision or a failure. */
  bool ApplyGeneration(const FString& EventJSON, FString& OutError, UProsettaGenerationAsset*& OutAccepted);

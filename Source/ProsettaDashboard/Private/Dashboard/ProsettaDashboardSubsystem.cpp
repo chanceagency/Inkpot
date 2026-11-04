@@ -27,6 +27,7 @@
 #include "Modules/ModuleManager.h"
 #include "Prosetta/ProsettaWatchSubsystem.h"
 #include "ScopedTransaction.h"
+#include "Serialization/JsonSerializer.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "ProsettaDashboard"
@@ -227,8 +228,27 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 	// must not rebuild this dashboard's mirror or run its presentation importer.
 	FProsettaManifestSummary Manifest;
 	if (Generation.GenerationId.IsEmpty() ||
-		!UProsettaSyncInspector::LoadManifestFile(ProsettaStorySource::ManifestPath(Model->GetDeps().MirrorRoot), Manifest) ||
-		Manifest.GenerationId != Generation.GenerationId) { return; }
+		!UProsettaSyncInspector::LoadManifestFile(ProsettaStorySource::ManifestPath(Model->GetDeps().MirrorRoot), Manifest)) { return; }
+	if (Manifest.GenerationId != Generation.GenerationId)
+	{
+		// One-shot sync may write generation:null for identical content. Compare the full
+		// verified artifact set, never just compiled Ink (audio-only updates matter too).
+		if (!Manifest.GenerationId.IsEmpty()) { return; }
+		TSharedPtr<FJsonObject> Event;
+		FString ManifestPath;
+		FProsettaManifestSummary Accepted;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Generation.Provenance), Event) || !Event ||
+			!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath) || FPaths::IsRelative(ManifestPath) ||
+			!UProsettaSyncInspector::LoadManifestFile(ManifestPath, Accepted) || Accepted.GenerationId != Generation.GenerationId ||
+			Manifest.ProjectId <= 0 || Manifest.ProjectId != Accepted.ProjectId || Manifest.Scope != Accepted.Scope ||
+			Manifest.Artifacts.IsEmpty() || Manifest.Artifacts.Num() != Accepted.Artifacts.Num()) { return; }
+		for (const FProsettaArtifactSummary& Artifact : Manifest.Artifacts)
+		{
+			const FProsettaArtifactSummary* Match = Accepted.FindArtifact(Artifact.Key);
+			if (!Match || Artifact.RelativePath != Match->RelativePath || Artifact.ByteSize != Match->ByteSize ||
+				!Artifact.Checksum.Equals(Match->Checksum, ESearchCase::IgnoreCase)) { return; }
+		}
+	}
 	// A newly accepted generation is already in the mirror; our own import of it is not an "external" change.
 	bManifestChangeQueued = false;
 	Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);
