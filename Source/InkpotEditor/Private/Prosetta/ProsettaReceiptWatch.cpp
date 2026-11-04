@@ -3,6 +3,7 @@
 #include "IDirectoryWatcher.h"
 #include "Editor.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
@@ -116,7 +117,14 @@ int32 FProsettaReceiptWatch::Poll()
 
 bool FProsettaReceiptWatch::Tick(float DeltaTime)
 {
- // The flag stays raised until an importer exists, so nothing written before then is missed.
- if (GetImporter() && bChangesPending.exchange(false)) Poll();
+ // Notifications are only hints: atomic receipt replacement can be missed/coalesced
+ // by the OS. Reconcile the small receipt directory even without a callback. The
+ // content de-dup and verified importer still own acceptance, PIE deferral and saves.
+ const double Now = FPlatformTime::Seconds();
+ if (GetImporter() && (bChangesPending.exchange(false) || Now - LastReceiptScanSeconds >= 2.))
+ {
+  LastReceiptScanSeconds = Now;
+  Poll();
+ }
  return true;
 }

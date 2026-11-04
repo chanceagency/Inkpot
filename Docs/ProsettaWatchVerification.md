@@ -74,3 +74,13 @@ samples remain valid. The SoundFactory result is transferred into its persistent
 wrapper after finishing pending compression; it is never duplicated with live
 audio bulk-data state. No abandoned transient factory wave remains. This covers
 the live UE 5.8 audio-import crash found during watched voice QA.
+
+## Recovery from missed completion notifications
+
+`Inkpot.Prosetta.WatchReceiptRecovery` atomically replaces a receipt, suppresses
+the notification hint and advances the bounded reconciliation interval. It checks
+that the new story and WAV samples enter the verified importer, Play still defers
+application, and repeated scans do not replay unchanged receipts. The two-second
+fallback scans only sanitized completion receipts, never the network or individual
+mirror files. Live QA reproduced a new mirror and receipt remaining unapplied
+with an empty importer queue until this gap was identified.

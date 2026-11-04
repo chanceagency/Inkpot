@@ -2,6 +2,9 @@
 #include "Misc/AutomationTest.h"
 #include "Prosetta/ProsettaWatchSubsystem.h"
 #include "Prosetta/ProsettaReceiptWatch.h"
+#include "DirectoryWatcherModule.h"
+#include "IDirectoryWatcher.h"
+#include "Modules/ModuleManager.h"
 #include "Prosetta/ProsettaChecksum.h"
 #include "Inkpot/Prosetta/ProsettaSyncedArtifact.h"
 #include "Asset/InkpotStoryAsset.h"
@@ -722,6 +725,64 @@ bool FProsettaWatchReceiptsTest::RunTest(const FString& InParameters)
  TestEqual(TEXT("every accepted receipt reached the importer once"), consumed.Num(), 3);
  return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchReceiptRecoveryTest, "Inkpot.Prosetta.WatchReceiptRecovery",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProsettaWatchReceiptRecoveryTest::RunTest(const FString&)
+{
+ const FString scope = TEXT("receipt-recovery-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ TStrongObjectPtr<UProsettaWatchSubsystem> Watch(NewObject<UProsettaWatchSubsystem>());
+ const FString Directory = FPaths::ConvertRelativePathToFull(FPaths::AutomationTransientDir() / TEXT("ReceiptRecovery") / FGuid::NewGuid().ToString());
+ cleanup.TrackDirectory(Directory);
+ const FString File = Directory / TEXT("receipt.json");
+ const FFixture First = Generation(scope, TEXT("1"), TEXT("live"));
+ const FFixture Second = Generation(scope, TEXT("2"), TEXT("live"));
+ cleanup.Track(First); cleanup.Track(Second);
+ FProsettaReceiptWatch Receipts(Directory, nullptr, [&Watch]() { return Watch.Get(); });
+ // Remove the real notifier so a callback racing this test cannot mask the failure.
+ if (Receipts.WatchHandle.IsValid())
+ {
+  FModuleManager::LoadModuleChecked<FDirectoryWatcherModule>(TEXT("DirectoryWatcher")).Get()->UnregisterDirectoryChangedCallback_Handle(Directory, Receipts.WatchHandle);
+  Receipts.WatchHandle.Reset();
+ }
+ TestTrue(TEXT("initial receipt written"), FFileHelper::SaveStringToFile(First.Event, *File));
+ Receipts.Tick(0.f);
+ if (!TestTrue(TEXT("startup receipt imports"), Watch->TryApplyPending())) return false;
+ TestTrue(TEXT("next completion staged"), FFileHelper::SaveStringToFile(Second.Event, *(File + TEXT(".tmp"))));
+ TestTrue(TEXT("completion atomically replaces receipt"), IFileManager::Get().Move(*File, *(File + TEXT(".tmp")), true, true));
+ // Simulate the actual failure: no OS callback after the replacing rename.
+ Receipts.bChangesPending = false;
+ Receipts.LastReceiptScanSeconds = FPlatformTime::Seconds();
+ Receipts.Tick(0.f);
+ TestEqual(TEXT("bounded fallback does not rescan every frame"), Watch->GetPendingCount(), 0);
+ Receipts.bChangesPending = false;
+ Receipts.LastReceiptScanSeconds = 0.; // Deterministic elapsed interval, no sleeps or OS delivery assumptions.
+ Receipts.Tick(0.f);
+ TestEqual(TEXT("missed notification still queues the new generation"), Watch->GetPendingCount(), 1);
+ UWorld* PreviousWorld = GEditor->PlayWorld;
+ GEditor->PlayWorld = NewObject<UWorld>();
+ TestFalse(TEXT("recovered receipt still defers during Play"), Watch->TryApplyPending());
+ GEditor->PlayWorld = PreviousWorld;
+ if (!TestTrue(TEXT("recovered receipt imports when safe"), Watch->TryApplyPending())) return false;
+ UProsettaGenerationAsset* Registry = State(Second);
+ if (!TestNotNull(TEXT("recovered registry"), Registry)) return false;
+ TestEqual(TEXT("new generation accepted"), Registry->GenerationId, SHAString(scope + TEXT("2live")));
+ UInkpotStoryAsset* Story = Cast<UInkpotStoryAsset>(Registry->Assets.FindRef(TEXT("compiled-story")));
+ TestTrue(TEXT("line changes arrive through the recovered receipt"), Story && Story->GetCompiledJSON().Contains(TEXT("Generation 2")));
+ UProsettaSyncedArtifact* Audio = Cast<UProsettaSyncedArtifact>(Registry->Assets.FindRef(TEXT("audio-file:take1")));
+ if (TestNotNull(TEXT("updated audio exists"), Audio) && TestNotNull(TEXT("updated wave exists"), Audio->Audio.Get()))
+ {
+  TArray<uint8> PCM; uint32 Rate = 0; uint16 Channels = 0;
+  TestTrue(TEXT("updated selected audio remains readable"), Audio->Audio->GetImportedSoundWaveData(PCM, Rate, Channels));
+  if (!PCM.IsEmpty()) TestEqual(TEXT("updated audio samples arrived"), PCM[0], uint8(2));
+ }
+ Receipts.bChangesPending = false;
+ Receipts.LastReceiptScanSeconds = 0.;
+ Receipts.Tick(0.f);
+ TestEqual(TEXT("unchanged receipts are not replayed by periodic reconciliation"), Watch->GetPendingCount(), 0);
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchReceiptTransportTest, "Inkpot.Prosetta.WatchReceiptTransport",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
