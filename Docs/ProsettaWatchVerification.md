@@ -67,3 +67,10 @@ A single per-volume artifact also resolves without a default flag. Existing
 canonical artifacts keep priority; ambiguous multi-volume scopes require a level
 volume selection. The test reads actual fixture mirror files so resolving a
 nonexistent `compiled/story.json` cannot pass.
+
+`Inkpot.Prosetta.WatchAudioOwnership` imports three changing selected WAVs, reads
+back their PCM, completes platform compression, and verifies the prior wave's
+samples remain valid. The SoundFactory result is transferred into its persistent
+wrapper after finishing pending compression; it is never duplicated with live
+audio bulk-data state. No abandoned transient factory wave remains. This covers
+the live UE 5.8 audio-import crash found during watched voice QA.

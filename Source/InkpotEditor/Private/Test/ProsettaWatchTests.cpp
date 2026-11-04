@@ -437,6 +437,52 @@ bool FProsettaWatchOwnedRemovalTest::RunTest(const FString& InParameters)
  }
  return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchAudioOwnershipTest, "Inkpot.Prosetta.WatchAudioOwnership",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FProsettaWatchAudioOwnershipTest::RunTest(const FString&)
+{
+ const FString scope = TEXT("audio-ownership-") + FGuid::NewGuid().ToString();
+ FFixtureCleanup cleanup;
+ TStrongObjectPtr<UProsettaWatchSubsystem> watch(NewObject<UProsettaWatchSubsystem>());
+ TSet<USoundWave*> TransientBefore;
+ for (TObjectIterator<USoundWave> It; It; ++It)
+  if (It->GetOutermost() == GetTransientPackage()) TransientBefore.Add(*It);
+ TStrongObjectPtr<USoundWave> Previous;
+ for (int32 Revision = 1; Revision <= 3; ++Revision)
+ {
+  const FFixture Fixture = Generation(scope, FString::FromInt(Revision), TEXT("live"));
+  cleanup.Track(Fixture);
+  TestTrue(TEXT("updated selected audio queues"), watch->ConsumeEvent(Fixture.Event));
+  if (!TestTrue(TEXT("updated selected audio imports"), watch->TryApplyPending())) return false;
+  UProsettaGenerationAsset* Registry = State(Fixture);
+  UProsettaSyncedArtifact* Audio = Registry ? Cast<UProsettaSyncedArtifact>(Registry->Assets.FindRef(TEXT("audio-file:take1"))) : nullptr;
+  if (!TestNotNull(TEXT("selected audio wrapper"), Audio) || !TestNotNull(TEXT("selected wave"), Audio->Audio.Get())) return false;
+  USoundWave* Wave = Audio->Audio.Get();
+  TArray<uint8> PCM;
+  uint32 Rate = 0;
+  uint16 Channels = 0;
+  TestTrue(TEXT("published wave retains imported PCM"), Wave->GetImportedSoundWaveData(PCM, Rate, Channels));
+  TestEqual(TEXT("complete PCM payload survives publication"), PCM.Num(), 1600);
+  TestEqual(TEXT("sample rate survives publication"), Rate, uint32(8000));
+  TestEqual(TEXT("channel count survives publication"), Channels, uint16(1));
+  if (PCM.Num() > 0) TestEqual(TEXT("new voice samples are used"), PCM[0], uint8(Revision));
+  TestEqual(TEXT("wave is owned by its persistent wrapper"), Wave->GetOuter(), static_cast<UObject*>(Audio));
+  Wave->BeginCachePlatformData();
+  Wave->FinishCachePlatformData();
+  if (Previous)
+  {
+   TArray<uint8> OldPCM;
+   TestTrue(TEXT("prior wave remains usable while replacement compresses"), Previous->GetImportedSoundWaveData(OldPCM, Rate, Channels));
+   if (OldPCM.Num() > 0) TestEqual(TEXT("replacement does not alter prior samples"), OldPCM[0], uint8(Revision - 1));
+  }
+  Previous.Reset(Wave);
+ }
+ // No abandoned factory temporary may retain compression work after publication.
+ for (TObjectIterator<USoundWave> It; It; ++It)
+  if (It->GetOutermost() == GetTransientPackage()) TestTrue(TEXT("no new transient factory wave left behind"), TransientBefore.Contains(*It));
+ return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProsettaWatchEmptyAudioTest, "Inkpot.Prosetta.WatchEmptyAudio",
  EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FProsettaWatchEmptyAudioTest::RunTest(const FString&)

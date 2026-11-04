@@ -574,6 +574,9 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
     const uint8* begin = pcm.GetData();
     candidate.Audio.Reset(Cast<USoundWave>(factory->FactoryCreateBinary(USoundWave::StaticClass(), GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), USoundWave::StaticClass()), RF_Transient, nullptr, TEXT("wav"), begin, begin + pcm.Num(), GWarn)));
     if (!candidate.Audio.IsValid()) { OutError = TEXT("Selected audio import failed: ") + candidate.Key; return false; }
+    // SoundFactory may start platform compression. Finish while the validated wave
+    // is strongly held, before moving it into the persistent ownership wrapper.
+    candidate.Audio->FinishCachePlatformData();
    }
   }
   else
@@ -678,7 +681,16 @@ bool UProsettaWatchSubsystem::ApplyGeneration(const FString& EventJSON, FString&
    {
     const FString soundName = TEXT("Take_") + candidate.Checksum;
     USoundWave* wave = FindObject<USoundWave>(supporting, *soundName);
-    supporting->Audio = wave ? wave : DuplicateObject<USoundWave>(candidate.Audio.Get(), supporting, *soundName);
+    if (!wave)
+    {
+     // Transfer the actual factory result. Duplicating a live USoundWave copies
+     // editor audio bulk-data/async compression state and can leave the source
+     // with an empty payload while a derived-data task is still using it.
+     wave = candidate.Audio.Get();
+     if (!wave->Rename(*soundName, supporting, REN_DontCreateRedirectors | REN_NonTransactional))
+     { OutError = TEXT("Could not adopt imported voice: ") + candidate.Key; rollback(); return false; }
+    }
+    supporting->Audio = wave;
     supporting->Audio->ClearFlags(RF_Transient);
     supporting->Audio->SetFlags(RF_Public);
    }
