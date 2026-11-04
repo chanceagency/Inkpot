@@ -39,6 +39,8 @@ public:
   * Must be called on the game thread.
   */
  bool IsGenerationCurrent(const FString& EventJSON) const;
+ /** Last successfully accepted registry for exactly this project/channel/canonical scope; never queued work. */
+ const UProsettaGenerationAsset* FindAcceptedGeneration(int32 ProjectId, const FString& Channel, const FString& Scope) const;
  virtual void Initialize(FSubsystemCollectionBase& Collection) override;
  virtual void Deinitialize() override;
  /**

@@ -266,6 +266,8 @@ public:
 	/** Runs the queued reload when it is safe; returns true when one ran. */
 	bool TryRunPendingReload();
 	const FProsettaDashboardModelDeps& GetDeps() const { return Deps; }
+	/** Changes the read-only source projection; does not sync, copy files or request an import. */
+	void SetMirrorRoot(const FString& Root);
 
 	/** Pure classification used by Poll; whoami facts come from the last Connect. */
 	static EProsettaDashboardConnection ClassifyConnection(const FString& WatchStatus, const FString& TransportStatus, bool bWhoamiOk, bool bWhoamiKnown);

@@ -44,11 +44,15 @@ public:
 
 private:
 	friend class FProsettaDashboardAcceptedMirrorTest;
+	friend class FProsettaDashboardReleasedMirrorTest;
 	FProsettaDashboardModelDeps BuildDeps();
 	bool Tick(float DeltaTime);
 	void EnsureManifestWatcher();
 	void HandleDirectoryChanged(const TArray<struct FFileChangeData>& Changes);
 	void HandleGenerationAccepted(const UProsettaGenerationAsset& Generation);
+	bool AdoptReleasedSource(const UProsettaGenerationAsset& Generation);
+	void RefreshReleasedSource();
+	void ClearReleasedSource();
 	void HandlePreBeginPIE(bool bSimulating);
 	void HandleEndPIE(bool bSimulating);
 	void HandleMapOpened(const FString& Filename, bool bAsTemplate);
@@ -63,6 +67,10 @@ private:
 	FDelegateHandle MapOpenedHandle;
 	FDelegateHandle DirectoryWatchHandle;
 	FString WatchedDirectory;
+	FString LiveMirrorRoot;
+	FString ActiveReleaseScope;
+	FString ActiveReleasePublishedAt;
+	FString ActiveReleaseGenerationId;
 	double LastManifestChangeSeconds = 0.0;
 	/** Last tick the dashboard's own CLI was running; manifest changes close to it are not external. */
 	double LastOwnRunSeconds = -1000.0;

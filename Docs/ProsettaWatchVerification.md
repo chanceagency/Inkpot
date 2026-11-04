@@ -84,3 +84,18 @@ application, and repeated scans do not replay unchanged receipts. The two-second
 fallback scans only sanitized completion receipts, never the network or individual
 mirror files. Live QA reproduced a new mirror and receipt remaining unapplied
 with an empty importer queue until this gap was identified.
+
+
+## Published release source selection
+
+`latest-release` receipts identify a volume-specific immutable generation, kept
+separate from the live compatibility mirror. The dashboard selects that source
+only after the Watch importer accepts it for the active profile's project and
+single volume. The same source feeds the dashboard manifest, story rebuild,
+presentation importer and next Play; it is never copied over the live mirror.
+The selection is editor-session state, never an absolute path saved in a level.
+An existing accepted registry restores it on editor startup without receipt replay.
+Leaving latest-release restores the ordinary mirror, and an explicit different
+scene volume retains its own source. Older publications and unrelated scopes
+cannot change the active source. Keep
+`Inkpot.Prosetta.Dashboard.Model.LatestReleaseUsesAcceptedFrozenSource` covered.
