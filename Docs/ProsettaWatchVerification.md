@@ -100,3 +100,10 @@ Leaving latest-release restores the ordinary mirror, and an explicit different
 scene volume retains its own source. Older publications and unrelated scopes
 cannot change the active source. Keep
 `Inkpot.Prosetta.Dashboard.Model.LatestReleaseUsesAcceptedFrozenSource` covered.
+
+
+`StoryAssetBuild.CompiledEditorAssetIdentity` exercises the actual editor import
+path for a compiled-only source. Keep the task's explicit destination object name:
+`Story.ink.json` must import as the requested `Story.Story`, with its sidecar,
+rather than deriving `Story_ink` from the filename. Automated import tasks do not
+save; the existing generated-package save gate remains the only save owner.

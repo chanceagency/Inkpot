@@ -5,7 +5,7 @@
 #include "Asset/InkpotStoryAssetFactory.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
-#include "AutomatedAssetImportData.h"
+#include "AssetImportTask.h"
 #include "EditorReimportHandler.h"
 #include "Misc/ScopedSlowTask.h"
 #include "HAL/FileManager.h"
@@ -258,20 +258,30 @@ FProsettaStoryAssetBuildResult RebuildProsettaStoryAsset(const FProsettaStoryAss
 	}
 	else
 	{
-		UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
-		ImportData->GroupName = TEXT("ProsettaSyncImport");
-		ImportData->DestinationPath = PackagePath;
-		ImportData->bReplaceExisting = true;
-		ImportData->Factory = NewObject<UInkpotStoryAssetFactory>();
-		ImportData->Filenames.Add(StagedMain);
-		FAssetToolsModule& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-		const TArray<UObject*> Imported = AssetTools.Get().ImportAssetsAutomated(ImportData);
+		UAssetImportTask* Task = NewObject<UAssetImportTask>();
+		Task->Filename = StagedMain;
+		Task->DestinationPath = PackagePath;
+		// A compiled fallback is <Name>.ink.json. Deriving from its filename
+		// creates <Name>_ink, so pin the same identity as the explicit factory path.
+		Task->DestinationName = AssetName;
+		Task->bAutomated = true;
+		Task->bReplaceExisting = true;
+		Task->bSave = false; // Only our generated-package save gate may save it.
+		Task->Factory = NewObject<UInkpotStoryAssetFactory>();
+		FAssetToolsModule& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+		AssetTools.Get().ImportAssetTasks({Task});
+		const TArray<UObject*>& Imported = Task->GetObjects();
 		Asset = Imported.IsEmpty() ? nullptr : Cast<UInkpotStoryAsset>(Imported[0]);
 		if (!Asset)
 		{
 			Result.Error = FString::Printf(TEXT("Import created no story asset for %s"), *StagedMain);
 			return Result;
 		}
+	}
+	if (!Asset->GetPathName().Equals(Result.ObjectPath, ESearchCase::IgnoreCase))
+	{
+		Result.Error = FString::Printf(TEXT("Import created %s instead of the requested story asset %s."), *Asset->GetPathName(), *Result.ObjectPath);
+		return Result;
 	}
 	if (bInkFlow && !CompiledJson.IsEmpty())
 	{
