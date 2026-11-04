@@ -107,14 +107,19 @@ namespace
 		// These are derived packages owned by the build, not arbitrary dirty user assets.
 		// SavePackages invokes interactive revision-control checkout/error dialogs even when
 		// source control is disabled. A watch import must report an unwritable file once.
+		// Check every destination before writing any, so a read-only presentation package
+		// cannot leave a newly saved story beside stale presentation/media on disk.
 		for (UPackage* Package : Packages)
 		{
-			const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
-			if (IFileManager::Get().IsReadOnly(*Filename))
+			if (IFileManager::Get().IsReadOnly(*FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension())))
 			{
 				OutError = FString::Printf(TEXT("Cannot save read-only generated package %s; check it out or make it writable, then rebuild."), *Package->GetName());
 				return false;
 			}
+		}
+		for (UPackage* Package : Packages)
+		{
+			const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
 			FSavePackageArgs Args;
 			Args.TopLevelFlags = RF_Public | RF_Standalone;
 			Args.SaveFlags = SAVE_NoError;

@@ -113,6 +113,8 @@ private:
  bool bApplyingPending = false;
  /** Automatic ticks wait for a quiet receipt interval; explicit Apply Pending remains immediate. */
  double LastPendingEventTime = 0.0;
+ /** When the queue last went from empty to non-empty; caps how long a receipt stream can defer automatic apply. */
+ double FirstPendingEventTime = 0.0;
  TMap<FString, FString> Pending;
  TMap<FString, FString> NativeGenerationPaths;
 };
