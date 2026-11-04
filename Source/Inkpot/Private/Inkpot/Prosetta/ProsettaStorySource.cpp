@@ -84,6 +84,21 @@ namespace ProsettaStorySource
 
 		if (VolumeSlug.IsEmpty())
 		{
+			// Multi-volume exports contain only compiled-story:<slug>. Follow the declared
+			// default rather than returning a nonexistent compiled/story.json and playing
+			// a stale baked asset while Watch has already downloaded the current story.
+			if (CanonicalStory.IsEmpty() && !Manifest.ScopeDetail.Volumes.IsEmpty())
+			{
+				const FProsettaScopeVolumeEntry* Default = Manifest.ScopeDetail.Volumes.FindByPredicate(
+					[](const FProsettaScopeVolumeEntry& Volume) { return Volume.bIsDefault; });
+				if (!Default && Manifest.ScopeDetail.Volumes.Num() == 1) { Default = &Manifest.ScopeDetail.Volumes[0]; }
+				if (Default && !Default->Slug.IsEmpty())
+				{
+					return ResolveStoryPathsFromManifest(Manifest, InMirrorRoot, Default->Slug, Out);
+				}
+				Out.Note = TEXT("The synced mirror has several volumes and no default compiled story; select the level's volume in the Prosetta Dashboard.");
+				return false;
+			}
 			// Canonical request: a single-volume scope still names the volume for provenance.
 			if (Manifest.ScopeDetail.Volumes.Num() == 1)
 			{

@@ -103,6 +103,7 @@ namespace ProsettaStorySource
 	INKPOT_API FProsettaResolvedStoryPaths CanonicalPaths(const FString& MirrorRoot);
 	/**
 	 * Resolves the files for VolumeSlug from an already parsed manifest. Manifest driven only:
+	 * an empty request follows the declared default when there is no canonical artifact;
 	 * a volume maps through the scope's artifact keys, then `compiled-story:<slug>`, then the
 	 * canonical files when the manifest's scope is that single volume. Any other volume request
 	 * falls back to the canonical files with bFellBackToCanonical set. Paths are never derived

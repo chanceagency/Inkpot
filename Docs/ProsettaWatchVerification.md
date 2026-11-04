@@ -56,3 +56,14 @@ artifact, relative path, process exit code and decoder error.
 `Inkpot.Prosetta.Dashboard.CliRunner.MultilineJson` covers formatted volume-list
 JSON split across pipe reads, compact NDJSON, final output after process exit,
 and incomplete JSON without logging its potentially sensitive content.
+
+## Multi-volume mirrors without a canonical story
+
+`Inkpot.Prosetta.StorySource.Paths.DefaultVolumeWithoutCanonical` covers the live
+multi-volume export layout: only `compiled-story:<slug>` artifacts are present,
+shared line metadata remains pooled, and an empty level volume selection follows
+`scope.volumes[].isDefault`. The selected default may sort after another volume.
+A single per-volume artifact also resolves without a default flag. Existing
+canonical artifacts keep priority; ambiguous multi-volume scopes require a level
+volume selection. The test reads actual fixture mirror files so resolving a
+nonexistent `compiled/story.json` cannot pass.
