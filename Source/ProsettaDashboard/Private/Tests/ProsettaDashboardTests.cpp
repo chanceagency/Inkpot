@@ -11,6 +11,8 @@
 #include "ProsettaPython.h"
 #include "ProsettaStoryAssetBuild.h"
 #include "AssetToolsModule.h"
+#include "ISourceControlModule.h"
+#include "ISourceControlProvider.h"
 #include "../Dashboard/ProsettaDashboardSubsystem.h"
 #include "Inkpot/Prosetta/ProsettaStorySource.h"
 #include "Inkpot/Prosetta/ProsettaStorySourceActor.h"
@@ -695,6 +697,12 @@ bool FProsettaDashboardDefaultVolumeBuildTest::RunTest(const FString&)
 DASHBOARD_TEST(FProsettaDashboardCompiledAssetIdentityTest, "StoryAssetBuild.CompiledEditorAssetIdentity")
 bool FProsettaDashboardCompiledAssetIdentityTest::RunTest(const FString&)
 {
+ // The editor importer consults source control. Keep this offline even when the
+ // host has a real Git/Perforce provider configured, and restore it afterwards.
+ ISourceControlModule& SourceControl = ISourceControlModule::Get();
+ const FName PriorProvider = SourceControl.GetProvider().GetName();
+ SourceControl.SetProvider(FName(TEXT("None")));
+ ON_SCOPE_EXIT { SourceControl.SetProvider(PriorProvider); };
  const FString Root = TransientDir(TEXT("CompiledIdentity"));
  const FString Folder = TEXT("/Game/ProsettaBuildTests/T") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
  ON_SCOPE_EXIT
