@@ -81,9 +81,13 @@ bool FProsettaStorySourceForWorldDefaultTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("describe"), Source.Describe(), FString(TEXT("canonical")));
 	TestEqual(TEXT("null world is canonical"), ProsettaStorySource::ForWorld(nullptr).Describe(), FString(TEXT("canonical")));
 
-	// The default source resolves to exactly the canonical story so existing levels keep playing the same file.
-	const FString Expected = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Prosetta"), TEXT("compiled"), TEXT("story.json"));
-	TestEqual(TEXT("compiled story path"), ProsettaStorySource::CompiledStoryPathForWorld(W.World), Expected);
+	// Exercise the no-manifest layout in an isolated fixture. The checkout's live
+	// mirror can validly be a multi-volume export with no canonical artifact.
+	FScratchMirror Mirror(TEXT("DefaultWorldNoManifest"));
+	FProsettaResolvedStoryPaths Paths;
+	TestTrue(TEXT("default world source resolves without a manifest"), ProsettaStorySource::ResolveStoryPaths(Mirror.Root, Source.VolumeSlug, Paths));
+	const FString Expected = FPaths::Combine(Mirror.Root, TEXT("compiled"), TEXT("story.json"));
+	TestEqual(TEXT("canonical compiled story path without a manifest"), Paths.CompiledStoryPath, Expected);
 	return true;
 }
 
