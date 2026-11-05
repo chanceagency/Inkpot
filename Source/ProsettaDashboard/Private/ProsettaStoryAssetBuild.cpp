@@ -7,6 +7,7 @@
 #include "AssetToolsModule.h"
 #include "AssetImportTask.h"
 #include "EditorReimportHandler.h"
+#include "Misc/PackageName.h"
 #include "Misc/ScopedSlowTask.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
@@ -281,6 +282,16 @@ FProsettaStoryAssetBuildResult RebuildProsettaStoryAsset(const FProsettaStoryAss
 	if (!Asset->GetPathName().Equals(Result.ObjectPath, ESearchCase::IgnoreCase))
 	{
 		Result.Error = FString::Printf(TEXT("Import created %s instead of the requested story asset %s."), *Asset->GetPathName(), *Result.ObjectPath);
+		// Do not leave the rejected, never-saved object for a later Save All. An asset
+		// that already exists on disk is the user's and is left untouched.
+		UPackage* Stray = Asset->GetOutermost();
+		if (!FPackageName::DoesPackageExist(Stray->GetName()))
+		{
+			FAssetRegistryModule::AssetDeleted(Asset);
+			Stray->SetDirtyFlag(false);
+			Asset->ClearFlags(RF_Public | RF_Standalone);
+			Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+		}
 		return Result;
 	}
 	if (bInkFlow && !CompiledJson.IsEmpty())

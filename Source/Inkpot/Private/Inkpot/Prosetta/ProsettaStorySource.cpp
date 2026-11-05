@@ -222,6 +222,14 @@ namespace ProsettaStorySource
 		{
 			Out = CanonicalPaths(InMirrorRoot);
 			bResolved = VolumeSlug.IsEmpty();
+			if (bEditorReleasePending && FPaths::IsSamePath(InMirrorRoot, EditorMirrorRoot))
+			{
+				// A deliberate hold, not a broken mirror: nothing from it is playable yet.
+				Out.bFellBackToCanonical = !bResolved;
+				Out.Note = FString::Printf(TEXT("latest-release volume '%s' is waiting for its first accepted release; nothing is playable from the Prosetta mirror yet"), *EditorVolumeSlug);
+				UE_LOG(LogProsettaStorySource, Log, TEXT("Prosetta story source: %s"), *Out.Note);
+				return bResolved;
+			}
 			if (!bResolved)
 			{
 				Out.bFellBackToCanonical = true;

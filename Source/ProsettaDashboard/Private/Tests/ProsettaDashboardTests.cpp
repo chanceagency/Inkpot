@@ -50,6 +50,17 @@
 
 namespace
 {
+	/** Release a test-owned package so it cannot leak dirty assets into the host editor. */
+	void ReleaseTestAsset(const FString& ObjectPath)
+	{
+		if (UObject* Asset = FindObject<UObject>(nullptr, *ObjectPath))
+		{
+			Asset->GetOutermost()->SetDirtyFlag(false);
+			Asset->ClearFlags(RF_Public | RF_Standalone);
+			Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+		}
+	}
+
 	FString TransientDir(const TCHAR* Leaf)
 	{
 		return FPaths::ConvertRelativePathToFull(FPaths::AutomationTransientDir() / TEXT("ProsettaDashboard") / Leaf / FGuid::NewGuid().ToString());
@@ -641,13 +652,7 @@ bool FProsettaDashboardGeneratedSaveTest::RunTest(const FString&)
  TestTrue(TEXT("read-only file remains intact"), Before == After);
  FPlatformFileManager::Get().GetPlatformFile().SetReadOnly(*Filename, false);
  TestTrue(TEXT("explicit rebuild recovers after checkout"), RebuildProsettaStoryAsset(Options).bSucceeded);
- // Release this test-owned package so it cannot leak dirty assets into the host editor.
- if (UObject* Asset = FindObject<UObject>(nullptr, *First.ObjectPath))
- {
-  Asset->GetOutermost()->SetDirtyFlag(false);
-  Asset->ClearFlags(RF_Public | RF_Standalone);
-  Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
- }
+ ReleaseTestAsset(First.ObjectPath);
  return true;
 }
 
@@ -661,12 +666,7 @@ bool FProsettaDashboardDefaultVolumeBuildTest::RunTest(const FString&)
  FProsettaStoryAssetBuildResult Result;
  ON_SCOPE_EXIT
  {
-  if (UObject* Asset = FindObject<UObject>(nullptr, *Result.ObjectPath))
-  {
-   Asset->GetOutermost()->SetDirtyFlag(false);
-   Asset->ClearFlags(RF_Public | RF_Standalone);
-   Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
-  }
+  ReleaseTestAsset(Result.ObjectPath);
   IFileManager::Get().DeleteDirectory(*Root, false, true);
  };
  FProsettaStoryAssetBuildOptions Options;
@@ -700,21 +700,23 @@ bool FProsettaDashboardCompiledAssetIdentityTest::RunTest(const FString&)
  // The editor importer consults source control. Keep this offline even when the
  // host has a real Git/Perforce provider configured, and restore it afterwards.
  ISourceControlModule& SourceControl = ISourceControlModule::Get();
+ const FName NoProvider(TEXT("None"));
  const FName PriorProvider = SourceControl.GetProvider().GetName();
- SourceControl.SetProvider(FName(TEXT("None")));
- ON_SCOPE_EXIT { SourceControl.SetProvider(PriorProvider); };
+ const bool bPriorConnected = SourceControl.IsEnabled() && SourceControl.GetProvider().IsAvailable();
+ if (PriorProvider != NoProvider) { SourceControl.SetProvider(NoProvider); }
+ ON_SCOPE_EXIT
+ {
+  if (SourceControl.GetProvider().GetName() == PriorProvider) { return; }
+  SourceControl.SetProvider(PriorProvider);
+  // SetProvider re-initializes without connecting; restore the connection the host had.
+  if (bPriorConnected) { SourceControl.GetProvider().Init(true); }
+ };
  const FString Root = TransientDir(TEXT("CompiledIdentity"));
  const FString Folder = TEXT("/Game/ProsettaBuildTests/T") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
  ON_SCOPE_EXIT
  {
-  for (const FString& Object : {Folder / TEXT("Story.Story"), Folder / TEXT("Story_ink.Story_ink")})
-  {
-   if (UObject* Asset = FindObject<UObject>(nullptr, *Object))
-   {
-    Asset->GetOutermost()->SetDirtyFlag(false); Asset->ClearFlags(RF_Public | RF_Standalone);
-    Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
-   }
-  }
+  ReleaseTestAsset(Folder / TEXT("Story.Story"));
+  ReleaseTestAsset(Folder / TEXT("Story_ink.Story_ink"));
   IFileManager::Get().DeleteDirectory(*Root, false, true);
  };
  FProsettaStoryAssetBuildOptions Options;
