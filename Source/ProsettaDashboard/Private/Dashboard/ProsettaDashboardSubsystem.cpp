@@ -286,8 +286,14 @@ bool UProsettaDashboardSubsystem::AdoptReleasedSource(const UProsettaGenerationA
 		!Event->TryGetStringField(TEXT("scope"), EventScope) || EventScope != Scope ||
 		!Event->TryGetStringField(TEXT("generationId"), Id) || Id != Generation.GenerationId ||
 		!Event->TryGetStringField(TEXT("generationPath"), Root) || FPaths::IsRelative(Root) ||
-		!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath) || ManifestPath != Root / TEXT("manifest.json") ||
+		!Event->TryGetStringField(TEXT("manifestPath"), ManifestPath) ||
 		!Event->TryGetObjectField(TEXT("release"), Release) || !(*Release)->TryGetStringField(TEXT("publishedAt"), PublishedAt)) { return false; }
+	// Match the importer's containment rule: a declared manifestPath (relative or not) must
+	// resolve to <generationPath>/manifest.json. A literal comparison would reject a generation
+	// the importer accepted and leave the release hold waiting forever.
+	Root = FPaths::ConvertRelativePathToFull(Root);
+	ManifestPath = FPaths::ConvertRelativePathToFull(ManifestPath);
+	if (ManifestPath != FPaths::ConvertRelativePathToFull(Root / TEXT("manifest.json"))) { return false; }
 	const FString Selection = FString::FromInt(Project) + TEXT("/") + Scope;
 	if (ActiveReleaseScope == Selection && !ActiveReleasePublishedAt.IsEmpty() && PublishedAt < ActiveReleasePublishedAt) { return false; }
 	FProsettaManifestSummary Manifest;
