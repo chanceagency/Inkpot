@@ -31,6 +31,7 @@ namespace ProsettaStorySource
 	{
 		FString EditorMirrorRoot;
 		FString EditorVolumeSlug;
+		bool bEditorReleasePending = false;
 	}
 
 	FString DefaultMirrorRoot()
@@ -45,7 +46,7 @@ namespace ProsettaStorySource
 
 	FString EditorStoryAssetPath(const FString& VolumeSlug)
 	{
-		return !EditorMirrorRoot.IsEmpty() && (VolumeSlug.IsEmpty() || VolumeSlug == EditorVolumeSlug)
+		return !bEditorReleasePending && !EditorMirrorRoot.IsEmpty() && (VolumeSlug.IsEmpty() || VolumeSlug == EditorVolumeSlug)
 			? VolumeStoryAssetPath(EditorVolumeSlug) : FString();
 	}
 
@@ -54,13 +55,30 @@ namespace ProsettaStorySource
 		return EditorMirrorRoot.IsEmpty() ? DefaultMirrorRoot() : EditorMirrorRoot;
 	}
 
-	void SetEditorMirrorRoot(const FString& Root, const FString& VolumeSlug)
+	void SetEditorMirrorRoot(const FString& Root, const FString& VolumeSlug, bool bAwaitingRelease)
 	{
 #if WITH_EDITOR
 		EditorMirrorRoot = Root;
 		EditorVolumeSlug = VolumeSlug;
+		bEditorReleasePending = bAwaitingRelease;
 #endif
 	}
+
+	void SetEditorReleasePending(int32 ProjectId, const FString& VolumeSlug)
+	{
+		// No files are projected here. In particular, pending/merely downloaded data
+		// cannot fall through to the live compatibility mirror.
+		const FString Root = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() /
+			TEXT("ProsettaSync/WaitingRelease") / FString::FromInt(ProjectId) / VolumeSlug);
+		SetEditorMirrorRoot(Root, VolumeSlug, true);
+	}
+
+	bool IsEditorReleasePending(const FString& VolumeSlug)
+	{
+		return bEditorReleasePending && (VolumeSlug.IsEmpty() || VolumeSlug == EditorVolumeSlug);
+	}
+
+	FString EditorSourceVolume() { return EditorVolumeSlug; }
 
 	FString ManifestPath(const FString& InMirrorRoot)
 	{
@@ -204,6 +222,14 @@ namespace ProsettaStorySource
 		{
 			Out = CanonicalPaths(InMirrorRoot);
 			bResolved = VolumeSlug.IsEmpty();
+			if (bEditorReleasePending && FPaths::IsSamePath(InMirrorRoot, EditorMirrorRoot))
+			{
+				// A deliberate hold, not a broken mirror: nothing from it is playable yet.
+				Out.bFellBackToCanonical = !bResolved;
+				Out.Note = FString::Printf(TEXT("latest-release volume '%s' is waiting for its first accepted release; nothing is playable from the Prosetta mirror yet"), *EditorVolumeSlug);
+				UE_LOG(LogProsettaStorySource, Log, TEXT("Prosetta story source: %s"), *Out.Note);
+				return bResolved;
+			}
 			if (!bResolved)
 			{
 				Out.bFellBackToCanonical = true;
