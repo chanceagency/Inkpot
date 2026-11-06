@@ -75,6 +75,7 @@ TSharedRef<FProsettaDashboardModel> UProsettaDashboardSubsystem::GetModel()
 	if (!Model)
 	{
 		Model = MakeShared<FProsettaDashboardModel>(BuildDeps());
+		RefreshReleasedSource();
 		Model->SeedChangesFromReceipts(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ProsettaSync"), TEXT("Watch")));
 		Model->Poll(BuildPollInput());
 		EnsureManifestWatcher();
@@ -285,12 +286,15 @@ void UProsettaDashboardSubsystem::RefreshReleasedSource()
 	const FProsettaSyncProfile& Profile = State.Profile;
 	const int32 Project = FCString::Atoi(*(Profile.ProjectId.IsEmpty() ? State.Credentials.ProjectId : Profile.ProjectId));
 	const FString Scope = Profile.Volumes.Num() == 1 && !Profile.Volumes[0].IsFixedTag() ? Profile.Volumes[0].Slug + TEXT("@latest-release") : FString();
-	if (Profile.Mode != EProsettaSyncMode::Watch || Profile.Channel != EProsettaWatchChannel::LatestRelease || Project <= 0 || Scope.IsEmpty())
+	if (Profile.Mode != EProsettaSyncMode::Watch || Profile.Channel != EProsettaWatchChannel::LatestRelease || Scope.IsEmpty())
 	{
 		ClearReleasedSource();
 		return;
 	}
-	if (!ActiveReleaseScope.IsEmpty() && ActiveReleaseScope != FString::FromInt(Project) + TEXT("/") + Scope) { ClearReleasedSource(); }
+	const FString Selection = FString::FromInt(Project) + TEXT("/") + Scope;
+	// Only an adopted release has a source to drop. A held selection is re-targeted in
+	// place below, so resolving credentials (project 0 -> N) never re-exposes the live draft.
+	if (!ActiveReleaseGenerationId.IsEmpty() && ActiveReleaseScope != Selection) { ClearReleasedSource(); }
 	// Receipt dedup intentionally does not re-accept an existing registry after restart.
 	// Restore that accepted source explicitly; never promote a downloaded/queued generation.
 	if (UProsettaWatchSubsystem* Watch = GEditor ? GEditor->GetEditorSubsystem<UProsettaWatchSubsystem>() : nullptr)
@@ -299,6 +303,15 @@ void UProsettaDashboardSubsystem::RefreshReleasedSource()
 		{
 			if (ActiveReleaseGenerationId != Accepted->GenerationId) { HandleGenerationAccepted(*Accepted); }
 		}
+	}
+	// Runs every tick: enter (or re-target) the hold only when it is not already in place.
+	if (ActiveReleaseGenerationId.IsEmpty() &&
+		(ActiveReleaseScope != Selection || !ProsettaStorySource::IsEditorReleasePending(Profile.Volumes[0].Slug)))
+	{
+		if (LiveMirrorRoot.IsEmpty()) { LiveMirrorRoot = Model->GetDeps().MirrorRoot; }
+		ActiveReleaseScope = Selection;
+		ProsettaStorySource::SetEditorReleasePending(Project, Profile.Volumes[0].Slug);
+		Model->SetMirrorRoot(ProsettaStorySource::MirrorRoot());
 	}
 }
 
@@ -342,7 +355,17 @@ void UProsettaDashboardSubsystem::HandleGenerationAccepted(const UProsettaGenera
 	Model->NoteGenerationAccepted(Generation.GenerationId, Model->GetState().Profile.bImportOnAccept);
 }
 
-void UProsettaDashboardSubsystem::HandlePreBeginPIE(bool) { if (Model) { RefreshReleasedSource(); Model->Poll(BuildPollInput()); } }
+void UProsettaDashboardSubsystem::HandlePreBeginPIE(bool)
+{
+	if (!Model)
+	{
+		// Creating the model already refreshes the released source and polls.
+		if (!IsRunningCommandlet()) { GetModel(); }
+		return;
+	}
+	RefreshReleasedSource();
+	Model->Poll(BuildPollInput());
+}
 void UProsettaDashboardSubsystem::HandleEndPIE(bool) { if (Model) { Model->Poll(BuildPollInput()); } }
 void UProsettaDashboardSubsystem::HandleMapOpened(const FString&, bool) { if (Model) { Model->Poll(BuildPollInput()); } }
 

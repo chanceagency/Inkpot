@@ -10,6 +10,9 @@
 #include "Inkpot/Prosetta/ProsettaSyncedArtifact.h"
 #include "ProsettaPython.h"
 #include "ProsettaStoryAssetBuild.h"
+#include "AssetToolsModule.h"
+#include "ISourceControlModule.h"
+#include "ISourceControlProvider.h"
 #include "../Dashboard/ProsettaDashboardSubsystem.h"
 #include "Inkpot/Prosetta/ProsettaStorySource.h"
 #include "Inkpot/Prosetta/ProsettaStorySourceActor.h"
@@ -47,6 +50,17 @@
 
 namespace
 {
+	/** Release a test-owned package so it cannot leak dirty assets into the host editor. */
+	void ReleaseTestAsset(const FString& ObjectPath)
+	{
+		if (UObject* Asset = FindObject<UObject>(nullptr, *ObjectPath))
+		{
+			Asset->GetOutermost()->SetDirtyFlag(false);
+			Asset->ClearFlags(RF_Public | RF_Standalone);
+			Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+		}
+	}
+
 	FString TransientDir(const TCHAR* Leaf)
 	{
 		return FPaths::ConvertRelativePathToFull(FPaths::AutomationTransientDir() / TEXT("ProsettaDashboard") / Leaf / FGuid::NewGuid().ToString());
@@ -638,13 +652,7 @@ bool FProsettaDashboardGeneratedSaveTest::RunTest(const FString&)
  TestTrue(TEXT("read-only file remains intact"), Before == After);
  FPlatformFileManager::Get().GetPlatformFile().SetReadOnly(*Filename, false);
  TestTrue(TEXT("explicit rebuild recovers after checkout"), RebuildProsettaStoryAsset(Options).bSucceeded);
- // Release this test-owned package so it cannot leak dirty assets into the host editor.
- if (UObject* Asset = FindObject<UObject>(nullptr, *First.ObjectPath))
- {
-  Asset->GetOutermost()->SetDirtyFlag(false);
-  Asset->ClearFlags(RF_Public | RF_Standalone);
-  Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
- }
+ ReleaseTestAsset(First.ObjectPath);
  return true;
 }
 
@@ -658,12 +666,7 @@ bool FProsettaDashboardDefaultVolumeBuildTest::RunTest(const FString&)
  FProsettaStoryAssetBuildResult Result;
  ON_SCOPE_EXIT
  {
-  if (UObject* Asset = FindObject<UObject>(nullptr, *Result.ObjectPath))
-  {
-   Asset->GetOutermost()->SetDirtyFlag(false);
-   Asset->ClearFlags(RF_Public | RF_Standalone);
-   Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
-  }
+  ReleaseTestAsset(Result.ObjectPath);
   IFileManager::Get().DeleteDirectory(*Root, false, true);
  };
  FProsettaStoryAssetBuildOptions Options;
@@ -688,6 +691,68 @@ bool FProsettaDashboardDefaultVolumeBuildTest::RunTest(const FString&)
  if (!TestTrue(TEXT("default volume builds"), Result.bSucceeded)) { AddInfo(Result.Error); return false; }
  TestEqual(TEXT("default volume's compiled story is used"), FPaths::ConvertRelativePathToFull(Result.CompiledStoryPath), FPaths::ConvertRelativePathToFull(MainStory));
  TestTrue(TEXT("compiled flow, not the pool source"), Result.StagedPath.EndsWith(TEXT(".ink.json")));
+ return true;
+}
+
+DASHBOARD_TEST(FProsettaDashboardCompiledAssetIdentityTest, "StoryAssetBuild.CompiledEditorAssetIdentity")
+bool FProsettaDashboardCompiledAssetIdentityTest::RunTest(const FString&)
+{
+ // The editor importer consults source control. Keep this offline even when the
+ // host has a real Git/Perforce provider configured, and restore it afterwards.
+ ISourceControlModule& SourceControl = ISourceControlModule::Get();
+ const FName NoProvider(TEXT("None"));
+ const FName PriorProvider = SourceControl.GetProvider().GetName();
+ const bool bPriorConnected = SourceControl.IsEnabled() && SourceControl.GetProvider().IsAvailable();
+ if (PriorProvider != NoProvider) { SourceControl.SetProvider(NoProvider); }
+ ON_SCOPE_EXIT
+ {
+  if (SourceControl.GetProvider().GetName() == PriorProvider) { return; }
+  SourceControl.SetProvider(PriorProvider);
+  // SetProvider re-initializes without connecting; restore the connection the host had.
+  if (bPriorConnected) { SourceControl.GetProvider().Init(true); }
+ };
+ const FString Root = TransientDir(TEXT("CompiledIdentity"));
+ const FString Folder = TEXT("/Game/ProsettaBuildTests/T") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+ ON_SCOPE_EXIT
+ {
+  ReleaseTestAsset(Folder / TEXT("Story.Story"));
+  ReleaseTestAsset(Folder / TEXT("Story_ink.Story_ink"));
+  IFileManager::Get().DeleteDirectory(*Root, false, true);
+ };
+ FProsettaStoryAssetBuildOptions Options;
+ Options.MirrorRoot = Root / TEXT("Mirror"); Options.StageDir = Root / TEXT("Stage");
+ Options.CompiledStoryPath = Options.MirrorRoot / TEXT("compiled/story.json");
+ Options.LinesPath = Options.MirrorRoot / TEXT("lines/lines.json");
+ Options.AssetPath = Folder / TEXT("Story"); Options.bImportPresentation = false; Options.bSave = false;
+ const FString Compiled = TEXT("{\"inkVersion\":21,\"root\":[\"done\",null],\"listDefs\":{}}");
+ const FString Lines = TEXT("{\"lines\":[]}");
+ FFileHelper::SaveStringToFile(Compiled, *Options.CompiledStoryPath);
+ FFileHelper::SaveStringToFile(Lines, *Options.LinesPath);
+ FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+ FProsettaStoryAssetBuildResult Result;
+ {
+  // Exercise the real interactive editor importer, not the explicit-name automation shortcut.
+  TGuardValue<bool> InteractiveImport(GIsAutomationTesting, false);
+  Result = RebuildProsettaStoryAsset(Options);
+ }
+ if (!TestTrue(TEXT("compiled editor import succeeds"), Result.bSucceeded)) { AddInfo(Result.Error); return false; }
+ TestEqual(TEXT("reported identity is exact"), Result.ObjectPath, Folder / TEXT("Story.Story"));
+ UInkpotStoryAsset* Asset = FindObject<UInkpotStoryAsset>(nullptr, *(Folder / TEXT("Story.Story")));
+ if (TestNotNull(TEXT("actual object exists at the reported target, not Story_ink"), Asset))
+ {
+  TestEqual(TEXT("actual imported package"), Asset->GetOutermost()->GetName(), Folder / TEXT("Story"));
+  TestEqual(TEXT("actual imported object name"), Asset->GetName(), FString(TEXT("Story")));
+  TSharedPtr<FJsonObject> Json;
+  const bool bParsed = FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Asset->GetCompiledJSON()), Json);
+  if (TestTrue(TEXT("compiled content remains valid JSON"), bParsed && Json.IsValid()))
+  {
+   TestEqual(TEXT("compiled ink version preserved"), Json->GetIntegerField(TEXT("inkVersion")), 21);
+   const TArray<TSharedPtr<FJsonValue>>& StoryRoot = Json->GetArrayField(TEXT("root"));
+   TestEqual(TEXT("compiled root shape preserved"), StoryRoot.Num(), 2);
+   if (StoryRoot.Num() == 2) { TestEqual(TEXT("compiled instruction preserved"), StoryRoot[0]->AsString(), FString(TEXT("done"))); TestTrue(TEXT("compiled terminator preserved"), StoryRoot[1]->IsNull()); }
+  }
+  TestEqual(TEXT("compiled sidecar preserved"), Asset->GetProsettaJSON(), Lines);
+ }
  return true;
 }
 
@@ -1042,11 +1107,11 @@ bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
 {
  FModelFixture Fixture;
  const FString PriorRoot = ProsettaStorySource::MirrorRoot();
- FProsettaResolvedStoryPaths PriorPaths;
+ const FString PriorVolume = ProsettaStorySource::EditorSourceVolume();
+ const bool bPriorPending = ProsettaStorySource::IsEditorReleasePending();
  const bool bPriorOverride = PriorRoot != ProsettaStorySource::DefaultMirrorRoot();
- if (bPriorOverride) { ProsettaStorySource::ResolveStoryPaths(PriorRoot, FString(), PriorPaths); }
  ProsettaStorySource::SetEditorMirrorRoot(FString(), FString());
- ON_SCOPE_EXIT { ProsettaStorySource::SetEditorMirrorRoot(bPriorOverride ? PriorRoot : FString(), PriorPaths.VolumeSlug); };
+ ON_SCOPE_EXIT { ProsettaStorySource::SetEditorMirrorRoot(bPriorOverride ? PriorRoot : FString(), PriorVolume, bPriorPending); };
  WriteManifest(Fixture.Deps.MirrorRoot, TEXT("live-current"));
  const FString ReleasedRoot = Fixture.Root / TEXT("FrozenRelease");
  const FString Id = FString::ChrN(64, TCHAR('a'));
@@ -1060,6 +1125,12 @@ bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
  Profile.Volumes.Reset();
  FProsettaVolumeScope Volume; Volume.Slug = TEXT("main"); Profile.Volumes.Add(Volume);
  Subsystem->Model->SetProfile(Profile);
+ FFileHelper::SaveStringToFile(TEXT("unpublished live draft"), *(Fixture.Deps.MirrorRoot / TEXT("compiled/story.json")));
+ Subsystem->RefreshReleasedSource();
+ TestTrue(TEXT("first release selection is held until a registry is accepted"), ProsettaStorySource::IsEditorReleasePending(TEXT("main")));
+ TestFalse(TEXT("another explicit volume is not held"), ProsettaStorySource::IsEditorReleasePending(TEXT("other")));
+ TestNotEqual(TEXT("populated live mirror is not exposed during bootstrap"), Subsystem->Model->GetDeps().MirrorRoot, Fixture.Deps.MirrorRoot);
+ TestFalse(TEXT("pending source has no draft manifest"), Subsystem->Model->GetState().bHasManifest);
  auto Event = MakeShared<FJsonObject>();
  Event->SetNumberField(TEXT("projectId"), 199999);
  Event->SetStringField(TEXT("channel"), TEXT("latest-release"));
@@ -1083,6 +1154,7 @@ bool FProsettaDashboardReleasedMirrorTest::RunTest(const FString&)
  UProsettaSyncInspector::LoadManifestFile(Fixture.Deps.MirrorRoot / TEXT("manifest.json"), Live);
  TestEqual(TEXT("release acceptance never rewrites the live mirror"), Live.GenerationId, FString(TEXT("live-current")));
  TestEqual(TEXT("runtime mirror follows the accepted release"), ProsettaStorySource::MirrorRoot(), ReleasedRoot);
+ TestFalse(TEXT("accepted release clears the playback hold"), ProsettaStorySource::IsEditorReleasePending());
  FProsettaResolvedStoryPaths Explicit;
  ProsettaStorySource::ResolveStoryPaths(ReleasedRoot, TEXT("other-volume"), Explicit);
  TestEqual(TEXT("another explicitly selected scene volume retains its own live source"), Explicit.MirrorRoot, ProsettaStorySource::DefaultMirrorRoot());
