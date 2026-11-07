@@ -1071,6 +1071,14 @@ void FProsettaDashboardModel::OpenOutliner() { if (Deps.OpenOutliner) { Deps.Ope
 
 // ---- manifest / changes ---------------------------------------------------------------------------
 
+void FProsettaDashboardModel::SetMirrorRoot(const FString& Root)
+{
+	if (Deps.MirrorRoot == Root) { return; }
+	Deps.MirrorRoot = Root;
+	RefreshManifest();
+	Broadcast();
+}
+
 void FProsettaDashboardModel::RefreshManifest()
 {
 	FProsettaManifestSummary Manifest;

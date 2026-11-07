@@ -103,6 +103,19 @@ namespace ProsettaStorySource
 {
 	/** <Project>/Saved/Prosetta, the sync mirror (derived data, read-only). */
 	INKPOT_API FString MirrorRoot();
+	/** The live compatibility mirror, independent of an editor's released-source selection. */
+	INKPOT_API FString DefaultMirrorRoot();
+	/** Imported story identity shared by the dashboard and runtime presentation resolver. */
+	INKPOT_API FString VolumeStoryAssetPath(const FString& Slug);
+	/** Imported story for the active accepted release, or empty for live / an explicit different volume. */
+	INKPOT_API FString EditorStoryAssetPath(const FString& VolumeSlug);
+	/** Select a verified released generation for this editor session; empty clears it. Never serialized into a level. */
+	INKPOT_API void SetEditorMirrorRoot(const FString& Root, const FString& VolumeSlug, bool bAwaitingRelease = false);
+	/** Hold automatic playback for this selected release source until a registry is accepted. */
+	INKPOT_API void SetEditorReleasePending(int32 ProjectId, const FString& VolumeSlug);
+	INKPOT_API bool IsEditorReleasePending(const FString& VolumeSlug = FString());
+	/** Transient selected volume, for preserving editor session state across scoped operations. */
+	INKPOT_API FString EditorSourceVolume();
 	/** <MirrorRoot>/manifest.json. */
 	INKPOT_API FString ManifestPath(const FString& MirrorRoot);
 	/** Canonical paths under MirrorRoot: compiled/story.json, lines/lines.json, localization/. */

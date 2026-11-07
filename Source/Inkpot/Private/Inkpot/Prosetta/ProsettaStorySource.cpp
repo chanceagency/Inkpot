@@ -27,10 +27,58 @@ bool FProsettaResolvedStoryPaths::IsComplete() const
 
 namespace ProsettaStorySource
 {
-	FString MirrorRoot()
+	namespace
+	{
+		FString EditorMirrorRoot;
+		FString EditorVolumeSlug;
+		bool bEditorReleasePending = false;
+	}
+
+	FString DefaultMirrorRoot()
 	{
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Prosetta"));
 	}
+
+	FString VolumeStoryAssetPath(const FString& Slug)
+	{
+		return FString::Printf(TEXT("/Game/Prosetta/Volumes/%s/Story"), *Slug);
+	}
+
+	FString EditorStoryAssetPath(const FString& VolumeSlug)
+	{
+		return !bEditorReleasePending && !EditorMirrorRoot.IsEmpty() && (VolumeSlug.IsEmpty() || VolumeSlug == EditorVolumeSlug)
+			? VolumeStoryAssetPath(EditorVolumeSlug) : FString();
+	}
+
+	FString MirrorRoot()
+	{
+		return EditorMirrorRoot.IsEmpty() ? DefaultMirrorRoot() : EditorMirrorRoot;
+	}
+
+	void SetEditorMirrorRoot(const FString& Root, const FString& VolumeSlug, bool bAwaitingRelease)
+	{
+#if WITH_EDITOR
+		EditorMirrorRoot = Root;
+		EditorVolumeSlug = VolumeSlug;
+		bEditorReleasePending = bAwaitingRelease;
+#endif
+	}
+
+	void SetEditorReleasePending(int32 ProjectId, const FString& VolumeSlug)
+	{
+		// No files are projected here. In particular, pending/merely downloaded data
+		// cannot fall through to the live compatibility mirror.
+		const FString Root = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() /
+			TEXT("ProsettaSync/WaitingRelease") / FString::FromInt(ProjectId) / VolumeSlug);
+		SetEditorMirrorRoot(Root, VolumeSlug, true);
+	}
+
+	bool IsEditorReleasePending(const FString& VolumeSlug)
+	{
+		return bEditorReleasePending && (VolumeSlug.IsEmpty() || VolumeSlug == EditorVolumeSlug);
+	}
+
+	FString EditorSourceVolume() { return EditorVolumeSlug; }
 
 	FString ManifestPath(const FString& InMirrorRoot)
 	{
@@ -157,6 +205,13 @@ namespace ProsettaStorySource
 
 	bool ResolveStoryPaths(const FString& InMirrorRoot, const FString& VolumeSlug, FProsettaResolvedStoryPaths& Out)
 	{
+		// An explicitly selected different scene volume must not fall back into this
+		// editor profile's single-volume release. Keep its live source independent.
+		if (!EditorMirrorRoot.IsEmpty() && InMirrorRoot == EditorMirrorRoot &&
+			!VolumeSlug.IsEmpty() && VolumeSlug != EditorVolumeSlug)
+		{
+			return ResolveStoryPaths(DefaultMirrorRoot(), VolumeSlug, Out);
+		}
 		FProsettaManifestSummary Manifest;
 		bool bResolved;
 		if (UProsettaSyncInspector::LoadManifestFile(ManifestPath(InMirrorRoot), Manifest))
@@ -167,6 +222,14 @@ namespace ProsettaStorySource
 		{
 			Out = CanonicalPaths(InMirrorRoot);
 			bResolved = VolumeSlug.IsEmpty();
+			if (bEditorReleasePending && FPaths::IsSamePath(InMirrorRoot, EditorMirrorRoot))
+			{
+				// A deliberate hold, not a broken mirror: nothing from it is playable yet.
+				Out.bFellBackToCanonical = !bResolved;
+				Out.Note = FString::Printf(TEXT("latest-release volume '%s' is waiting for its first accepted release; nothing is playable from the Prosetta mirror yet"), *EditorVolumeSlug);
+				UE_LOG(LogProsettaStorySource, Log, TEXT("Prosetta story source: %s"), *Out.Note);
+				return bResolved;
+			}
 			if (!bResolved)
 			{
 				Out.bFellBackToCanonical = true;

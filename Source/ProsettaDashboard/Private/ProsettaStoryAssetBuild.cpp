@@ -5,8 +5,9 @@
 #include "Asset/InkpotStoryAssetFactory.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
-#include "AutomatedAssetImportData.h"
+#include "AssetImportTask.h"
 #include "EditorReimportHandler.h"
+#include "Misc/PackageName.h"
 #include "Misc/ScopedSlowTask.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
@@ -34,7 +35,7 @@ FString ProsettaDefaultStoryAssetPath()
 
 FString ProsettaVolumeAssetPath(const FString& Slug)
 {
-	return FString::Printf(TEXT("/Game/Prosetta/Volumes/%s/Story"), *Slug);
+	return ProsettaStorySource::VolumeStoryAssetPath(Slug);
 }
 
 bool SplitProsettaAssetPath(const FString& InAssetPath, FString& OutPackagePath, FString& OutAssetName)
@@ -263,20 +264,40 @@ FProsettaStoryAssetBuildResult RebuildProsettaStoryAsset(const FProsettaStoryAss
 	}
 	else
 	{
-		UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
-		ImportData->GroupName = TEXT("ProsettaSyncImport");
-		ImportData->DestinationPath = PackagePath;
-		ImportData->bReplaceExisting = true;
-		ImportData->Factory = NewObject<UInkpotStoryAssetFactory>();
-		ImportData->Filenames.Add(StagedMain);
-		FAssetToolsModule& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-		const TArray<UObject*> Imported = AssetTools.Get().ImportAssetsAutomated(ImportData);
+		UAssetImportTask* Task = NewObject<UAssetImportTask>();
+		Task->Filename = StagedMain;
+		Task->DestinationPath = PackagePath;
+		// A compiled fallback is <Name>.ink.json. Deriving from its filename
+		// creates <Name>_ink, so pin the same identity as the explicit factory path.
+		Task->DestinationName = AssetName;
+		Task->bAutomated = true;
+		Task->bReplaceExisting = true;
+		Task->bSave = false; // Only our generated-package save gate may save it.
+		Task->Factory = NewObject<UInkpotStoryAssetFactory>();
+		FAssetToolsModule& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+		AssetTools.Get().ImportAssetTasks({Task});
+		const TArray<UObject*>& Imported = Task->GetObjects();
 		Asset = Imported.IsEmpty() ? nullptr : Cast<UInkpotStoryAsset>(Imported[0]);
 		if (!Asset)
 		{
 			Result.Error = FString::Printf(TEXT("Import created no story asset for %s"), *StagedMain);
 			return Result;
 		}
+	}
+	if (!Asset->GetPathName().Equals(Result.ObjectPath, ESearchCase::IgnoreCase))
+	{
+		Result.Error = FString::Printf(TEXT("Import created %s instead of the requested story asset %s."), *Asset->GetPathName(), *Result.ObjectPath);
+		// Do not leave the rejected, never-saved object for a later Save All. An asset
+		// that already exists on disk is the user's and is left untouched.
+		UPackage* Stray = Asset->GetOutermost();
+		if (!FPackageName::DoesPackageExist(Stray->GetName()))
+		{
+			FAssetRegistryModule::AssetDeleted(Asset);
+			Stray->SetDirtyFlag(false);
+			Asset->ClearFlags(RF_Public | RF_Standalone);
+			Asset->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+		}
+		return Result;
 	}
 	if (bInkFlow && !CompiledJson.IsEmpty())
 	{
